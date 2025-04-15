@@ -1,0 +1,20 @@
+// Zig package metadata for {zelda}
+.{
+    .name = .zelda,
+
+    .version = "0.0.1",
+
+    .minimum_zig_version = "0.14.0",
+
+    .fingerprint = 0x351c56b398cf98c,
+
+    .dependencies = .{},
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+}
