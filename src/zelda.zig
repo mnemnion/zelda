@@ -6,11 +6,17 @@
 
 const std = @import("std");
 
-pub fn aLinkToThePast(T: type, comptime next: []const u8) type {
+pub fn aLinkToThePast(T: type, comptime next: anytype) type {
     return singleLink(T, next);
 }
 
-pub fn singleLink(Node: type, comptime next: []const u8) type {
+pub fn singleLink(Node: type, comptime next_name: anytype) type {
+    // String-ify potential enum literal:
+    const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
+        @tagName(next_name)
+    else // If it coerces, it works:
+        next_name;
+
     verifyFieldType(Node, next);
 
     return struct {
@@ -25,7 +31,7 @@ pub fn singleLink(Node: type, comptime next: []const u8) type {
         /// Remove the node after the one provided, returning it.
         pub fn removeNext(node: *Node) ?*Node {
             const next_node = @field(node, next) orelse return null;
-            node.next = @field(next_node, next);
+            @field(node, next) = @field(next_node, next);
             return next_node;
         }
 
@@ -151,20 +157,71 @@ const expectEqual = testing.expectEqual;
 
 const Hyrule = struct {
     data: usize,
-    next: ?*Hyrule = null,
+    next_member: ?*Hyrule = null,
 
     pub fn init(data: usize) Hyrule {
         return .{ .data = data };
     }
 
-    pub usingnamespace aLinkToThePast(Hyrule, "next");
+    pub usingnamespace aLinkToThePast(Hyrule, .next_member);
 };
 
 test "links" {
     var this: Hyrule = .init(23);
     var that: Hyrule = .init(42);
     this.insertAfter(&that);
-    try expectEqual(this.next.?, &that);
+    try expectEqual(this.next_member.?, &that);
     const that_again = this.removeNext().?;
     try expectEqual(&that, that_again);
+}
+
+test "basics" {
+    const L = struct {
+        data: u32,
+        node: ?*@This() = null,
+
+        pub usingnamespace aLinkToThePast(@This(), .node);
+    };
+
+    var list: L.SinglyLinkedList = .empty;
+
+    try testing.expect(list.len() == 0);
+
+    var one: L = .{ .data = 1 };
+    var two: L = .{ .data = 2 };
+    var three: L = .{ .data = 3 };
+    var four: L = .{ .data = 4 };
+    var five: L = .{ .data = 5 };
+
+    list.prepend(&two); // {2}
+    two.insertAfter(&five); // {2, 5}
+    list.prepend(&one); // {1, 2, 5}
+    two.insertAfter(&three); // {1, 2, 3, 5}
+    three.insertAfter(&four); // {1, 2, 3, 4, 5}
+
+    try testing.expect(list.len() == 5);
+
+    // Traverse forwards.
+    {
+        var it = list.first;
+        var index: u32 = 1;
+        while (it) |next| : (it = next.node) {
+            try testing.expect(next.data == index);
+            index += 1;
+        }
+    }
+
+    _ = list.popFirst(); // {2, 3, 4, 5}
+    _ = list.remove(&five); // {2, 3, 4}
+    _ = two.removeNext(); // {2, 4}
+
+    try testing.expect(list.first.?.data == 2);
+    try testing.expect(list.first.?.node.?.data == 4);
+    try testing.expect(list.first.?.node.?.node == null);
+
+    L.reverse(&list.first);
+
+    try testing.expect(list.first.?.data == 4);
+    try testing.expect(list.first.?.node.?.data == 2);
+    try testing.expect(list.first.?.node.?.node == null);
 }
