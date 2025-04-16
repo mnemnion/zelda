@@ -115,6 +115,7 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype) type {
             const next_node = @field(node, next) orelse return null;
             @field(node, next) = @field(next_node, next);
             @field(next_node, next) = node;
+            return next_node;
         }
 
         /// Iterate over the singly-linked list from this node, until the final
@@ -165,6 +166,10 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype) type {
             first: ?*Node,
 
             pub const empty: SinglyLinkedList = .{ .first = null };
+
+            pub fn init(first: ?*Node) SinglyLinkedList {
+                return .{ .first = first };
+            }
 
             /// Prepend `new_node` as the first link in the list.
             pub fn prepend(list: *SinglyLinkedList, new_node: *Node) void {
@@ -274,7 +279,6 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
                 @field(next_node, prev) = new_node;
             } else {
                 // Last element of the list.
-                @field(new_node, next) = null;
             }
             @field(node, next) = new_node;
         }
@@ -288,7 +292,6 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
                 @field(prev_node, next) = new_node;
             } else {
                 // First element of the list.
-                @field(new_node, prev) = null;
             }
             @field(node, prev) = new_node;
         }
@@ -351,12 +354,22 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
         /// in a DoublyLinkedList, this condition can be detected (given
         /// otherwise proper use) if `node.next` is `null` after the call.
         pub fn swapForward(node: *DNode) void {
-            const this_next = @field(node, next) orelse return;
-            const next_after = @field(this_next, next);
-            @field(node, next) = next_after;
-            if (next_after) |after| @field(after, prev) = node;
-            @field(node, prev) = this_next;
-            @field(this_next, next) = node;
+            // ABCD -- ACBD.  node is B
+            const nodeC: *DNode = @field(node, next) orelse return;
+            const nodeA: ?*DNode = @field(node, prev);
+            const nodeD: ?*DNode = @field(nodeC, next);
+
+            // B <-> D
+            if (nodeD) |D| @field(D, prev) = node;
+            @field(node, next) = nodeD;
+
+            // C <-> B
+            @field(node, prev) = nodeC;
+            @field(nodeC, next) = node;
+
+            // A <-> C
+            @field(nodeC, prev) = nodeA;
+            if (nodeA) |A| @field(A, next) = nodeC;
         }
 
         /// Swaps this node's position with the position of `node.prev`.  If
@@ -364,12 +377,109 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
         /// in a DoublyLinkedList, this condition can be detected (given
         /// otherwise proper use) if `node.prev` is `null` after the call.
         pub fn swapBackward(node: *DNode) void {
-            const this_prev = @field(node, prev) orelse return;
-            const prev_before = @field(this_prev, prev);
-            @field(node, prev) = prev_before;
-            if (prev_before) |before| @field(before, next) = node;
-            @field(node, next) = this_prev;
-            @field(this_prev, prev) = node;
+            // ABCD -- ACBD.  node is C
+            const nodeB: *DNode = @field(node, prev) orelse return;
+            const nodeD: ?*DNode = @field(node, next);
+            const nodeA: ?*DNode = @field(nodeB, prev);
+
+            // A <-> C
+            @field(node, prev) = nodeA;
+            if (nodeA) |before| @field(before, next) = node;
+
+            // C <-> B
+            @field(node, next) = nodeB;
+            @field(nodeB, prev) = node;
+
+            // B <-> D
+            @field(nodeB, next) = nodeD;
+            if (nodeD) |D| @field(D, prev) = nodeB;
+        }
+
+        /// Answers whether the node is in a well-formed double linked
+        /// list when following the 'next' pointers.  Perhaps surprisingly,
+        /// this answers `true` if `node.next` is `null`.  A `false` answer
+        /// means there's a problem with your list, this is a diagnostic
+        /// tool.  If `node.prev` is `null`, this will detect a forward half
+        /// cyle as a broken link.
+        pub fn inDoubleLinkedListForward(node: *DNode) bool {
+            var this_node = node;
+            var maybe_next = @field(this_node, next);
+            while (maybe_next) |next_node| {
+                if (@field(next_node, prev) != this_node) return false;
+                this_node = next_node;
+                maybe_next = @field(next_node, next);
+            }
+            return true;
+        }
+
+        /// Answers whether the node is in a well-formed double linked
+        /// list when following the 'prev' pointers.  Perhaps surprisingly,
+        /// this answers `true` if `node.prev` is `null`.  A `false` answer
+        /// means there's a problem with your list, this is a diagnostic
+        /// tool.  If `node.next` is `null`, this will detect a backward half
+        /// cycle as a broken link.
+        pub fn inDoubleLinkedListBackward(node: *DNode) bool {
+            var this_node = node;
+            var maybe_prev = @field(this_node, prev);
+            while (maybe_prev) |prev_node| {
+                if (@field(prev_node, next) != this_node) return false;
+                this_node = prev_node;
+                maybe_prev = @field(prev_node, prev);
+            }
+            return true;
+        }
+
+        /// Answers whether the node is in a cycle, or whether it enters
+        /// one in the forward direction.  Uses Floyd-Knuth Tortoise and
+        /// Hare Algorithm.  Will detect proper loops, where each double
+        /// link is valid, but does not validate back links.  A diagnostic
+        /// tool, for when your program hangs and you need to know why.
+        pub fn inCycleForward(node: *DNode) bool {
+            var tortoise: *DNode = node;
+            var hare = @field(node, next);
+            while (@field(tortoise, next)) |next_tortoise| {
+                if (hare == null) return false;
+                const hare_next = @field(hare.?, next);
+                if (hare_next == tortoise) return true;
+                if (hare_next) |next_hare| {
+                    hare = @field(next_hare, next);
+                    if (hare) |next_next_hare| {
+                        if (next_next_hare == tortoise) return true;
+                    } else return false;
+                } else {
+                    return false;
+                }
+                tortoise = next_tortoise;
+            }
+            // Node is null forward, that's a false:
+            return false;
+        }
+
+        /// Answers whether the node is in a cycle, or whether it enters
+        /// one in the backward direction.  Uses Floyd-Knuth Tortoise and
+        /// Hare Algorithm.  Will detect proper loops, where each double
+        /// link is valid, but does not validate forward links.  A
+        /// diagnostic tool, for when your program hangs and you need to
+        /// know why.
+        pub fn inCycleBackward(node: *DNode) bool {
+            var tortoise: *DNode = node;
+            var hare = @field(node, prev);
+            while (@field(tortoise, prev)) |prev_tortoise| {
+                if (hare == null) return false;
+                const hare_prev = @field(hare.?, prev);
+                if (hare_prev == tortoise) return true;
+                if (hare_prev) |prev_hare| {
+                    hare = @field(prev_hare, prev);
+                    if (hare) |prev_prev_hare| {
+                        if (prev_prev_hare == tortoise) return true;
+                    } else return false;
+                } else {
+                    return false;
+                }
+                tortoise = prev_tortoise;
+            }
+            // Node is null backward, that's a false:
+            return false;
         }
 
         /// Multiple intrusive lists being possible, we always call functions
@@ -519,13 +629,13 @@ fn verifyFieldType(T: type, comptime field_name: []const u8) void {
                         @compileError("Optional pointer field does not point to the type");
                     }
                     if (p.is_const) {
-                        @compileError("The pointer type is const");
+                        @compileError("The pointer field's type is const");
                     }
                 },
                 else => @compileError("Optional field type is not a pointer"),
             }
         },
-        else => @compileError("Field is not an optional type"),
+        else => @compileError("Field type is not optional (?)"),
     }
 }
 
@@ -550,6 +660,9 @@ test Hyrule {
     var that: Hyrule = .init(42);
     this.insertAfter(&that);
     try expectEqual(this.next_member.?, &that);
+    _ = this.swap();
+    try expectEqual(that.next_member.?, &this);
+    _ = that.swap();
     const that_again = this.removeNext().?;
     try expectEqual(&that, that_again);
 }
@@ -630,12 +743,46 @@ test "A Link Between Worlds" {
     try testing.expect(list.first != null);
     try testing.expect(list.last != null);
 
+    try testing.expect(one.inDoubleLinkedListForward());
+    try testing.expect(five.inDoubleLinkedListBackward());
+
+    // Swap
+
+    try testing.expectEqual(2, three.backward.?.data);
+
+    three.swapForward();
+    try testing.expectEqual(4, three.backward.?.data);
+    try testing.expectEqual(5, three.forward.?.data);
+    try testing.expect(one.inDoubleLinkedListForward());
+    try testing.expect(five.inDoubleLinkedListBackward());
+
+    three.swapBackward();
+    try testing.expectEqual(4, three.forward.?.data);
+    try testing.expectEqual(2, three.backward.?.data);
+    try testing.expect(one.inDoubleLinkedListForward());
+    try testing.expect(five.inDoubleLinkedListBackward());
+
+    four.swapForward();
+    try testing.expectEqual(5, three.forward.?.data);
+    try testing.expectEqual(null, four.forward);
+    try testing.expect(one.inDoubleLinkedListForward());
+    try testing.expect(five.inDoubleLinkedListBackward());
+
+    four.swapBackward();
+    try testing.expectEqual(5, four.forward.?.data);
+    try testing.expectEqual(null, five.forward);
+    try testing.expect(one.inDoubleLinkedListForward());
+    try testing.expect(five.inDoubleLinkedListBackward());
+
+    try testing.expect(!one.inCycleForward());
+    try testing.expect(!five.inCycleBackward());
+
     // Traverse forwards.
     {
         var it = list.first;
         var index: u32 = 1;
         while (it) |node| : (it = node.forward) {
-            try testing.expect(node.data == index);
+            try testing.expectEqual(index, node.data);
             index += 1;
         }
         try testing.expectEqual(6, index);
@@ -646,7 +793,7 @@ test "A Link Between Worlds" {
         var it = list.last;
         var index: u32 = 1;
         while (it) |node| : (it = node.backward) {
-            try testing.expect(node.data == (6 - index));
+            try testing.expectEqual((6 - index), node.data);
             index += 1;
         }
         try testing.expectEqual(6, index);
@@ -664,4 +811,139 @@ test "A Link Between Worlds" {
     try testing.expectEqual(4, list.last.?.data);
 
     try testing.expect(list.len() == 2);
+}
+
+test "concatenation" {
+    const L = struct {
+        data: u32,
+        next: ?*@This() = null,
+        prev: ?*@This() = null,
+
+        pub usingnamespace aLinkBetweenWorlds(@This(), .next, "prev");
+    };
+    var list1: L.DoublyLinkedList = .empty;
+    var list2: L.DoublyLinkedList = .empty;
+
+    var one: L = .{ .data = 1 };
+    var two: L = .{ .data = 2 };
+    var three: L = .{ .data = 3 };
+    var four: L = .{ .data = 4 };
+    var five: L = .{ .data = 5 };
+
+    list1.append(&one);
+    list1.append(&two);
+    list2.append(&three);
+    list2.append(&four);
+    list2.append(&five);
+
+    list1.concatByMoving(&list2);
+
+    try testing.expect(list1.last == &five);
+    try testing.expect(list1.len() == 5);
+    try testing.expect(list2.first == null);
+    try testing.expect(list2.last == null);
+    try testing.expect(list2.len() == 0);
+
+    // Traverse forwards.
+    {
+        var it = list1.first;
+        var index: u32 = 1;
+        while (it) |node| : (it = node.next) {
+            try testing.expect(node.data == index);
+            index += 1;
+        }
+        try testing.expectEqual(6, index);
+    }
+
+    // Traverse backwards.
+    {
+        var it = list1.last;
+        var index: u32 = 1;
+        while (it) |node| : (it = node.prev) {
+            try testing.expect(node.data == (6 - index));
+            index += 1;
+        }
+        try testing.expectEqual(6, index);
+    }
+
+    // Swap them back, this verifies that concatenating to an empty list works.
+    list2.concatByMoving(&list1);
+
+    // Traverse forwards.
+    {
+        var it = list2.first;
+        var index: u32 = 1;
+        while (it) |node| : (it = node.next) {
+            try testing.expect(node.data == index);
+            index += 1;
+        }
+        try testing.expectEqual(6, index);
+    }
+
+    // Traverse backwards.
+    {
+        var it = list2.last;
+        var index: u32 = 1;
+        while (it) |node| : (it = node.prev) {
+            try testing.expect(node.data == (6 - index));
+            index += 1;
+        }
+        try testing.expectEqual(6, index);
+    }
+}
+
+test "cycles" {
+    const Kid = struct {
+        next: ?*@This() = null,
+        prev: ?*@This() = null,
+
+        pub usingnamespace doublyLinkedList(@This(), .next, .prev);
+    };
+
+    var alice: Kid = .{};
+    var bob: Kid = .{};
+    var charlie: Kid = .{};
+    var dan: Kid = .{};
+    alice.insertAfter(&bob);
+    try testing.expectEqual(&bob, alice.next.?);
+    try testing.expectEqual(null, alice.prev);
+
+    bob.insertAfter(&charlie);
+    try testing.expectEqual(&charlie, bob.next.?);
+    try testing.expectEqual(null, alice.prev);
+    try testing.expectEqual(&bob, alice.next.?);
+
+    charlie.insertAfter(&alice);
+    try testing.expectEqual(&alice, charlie.next.?);
+    try testing.expectEqual(&bob, charlie.prev.?);
+    try testing.expectEqual(&charlie, alice.prev.?);
+
+    try testing.expectEqual(&bob, alice.next.?);
+    try testing.expectEqual(&charlie, bob.next.?);
+    try testing.expectEqual(&alice, charlie.next.?);
+
+    try testing.expect(charlie.inCycleBackward());
+    try testing.expect(charlie.inCycleForward());
+    try testing.expect(alice.inCycleBackward());
+    try testing.expect(alice.inCycleForward());
+    try testing.expect(bob.inCycleBackward());
+    try testing.expect(bob.inCycleForward());
+
+    dan.next = &bob;
+    try testing.expect(dan.inCycleForward());
+    try testing.expect(!dan.inCycleBackward());
+
+    var ethel: Kid = .{};
+    var frank: Kid = .{};
+    var glen: Kid = .{};
+    glen.insertBefore(&frank);
+    frank.insertBefore(&ethel);
+    ethel.insertBefore(&glen);
+
+    try testing.expect(ethel.inCycleBackward());
+    try testing.expect(ethel.inCycleForward());
+    try testing.expect(frank.inCycleBackward());
+    try testing.expect(frank.inCycleForward());
+    try testing.expect(glen.inCycleBackward());
+    try testing.expect(glen.inCycleForward());
 }
