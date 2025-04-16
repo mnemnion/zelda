@@ -6,11 +6,77 @@
 
 const std = @import("std");
 
+/// Long ago, in the beautiful kingdom of Hyrule surrounded by mountains and
+/// forests...
+///
+/// legends told of an omnipotent and omniscient Golden Power that resided in a
+/// hidden land. Many people aggressively sought to enter the hidden Golden Land...
+///
+/// But no one ever returned.
+///
+/// One day evil power began to flow from the Golden Land...
+///
+/// So the King commanded seven wise men to seal the gate to the Land of the
+/// Golden Power. That seal should have remained for all time...
+///
+/// ...
+///
+/// ...But, when these events were obscured by the mists of time and became
+/// legend...
+///
+/// A mysterious wizard known as Agahnim came to Hyrule to release the seal. He
+/// eliminated the good King of Hyrule...
+///
+/// Through evil magic, he began to make descendants of the seven wise men vanish,
+/// one after another. And the time of destiny for Princess Zelda is drawing near.
 pub fn aLinkToThePast(T: type, comptime next: anytype) type {
-    return singleLink(T, next);
+    return singlyLinkedList(T, next);
 }
 
-pub fn singleLink(Node: type, comptime next_name: anytype) type {
+/// There is a legend oft told in Hyrule Kingdom.
+///
+/// It is the legend of the Triforce, once kept within Hyrule itself.
+///
+/// Said to be a gift of the gods, the Triforce could grant a wish of all
+/// those who touched it.
+///
+/// So of course, many wanted to get their hands on it.
+///
+/// Wars were fought for the Triforce.
+///
+/// The royal family summoned the Seven Sages, who sealed the Triforce
+/// in the Sacred Realm.
+///
+/// But a thief of notorious repute broke into the Sacred Realm and claimed
+/// the Triforce. With its power, he became the Demon King Ganon, who sought
+/// to dominate all Hyrule.
+///
+/// But just as Ganon had the kingdom in his evil clutches... a legendary
+/// hero answered the call of Hyrule's princess.
+///
+/// And this hero, wielding the Master Sword, took up a quest to challenge
+/// Ganon's might. He joined with the descendants of the Seven Sages to seal
+/// the Demon King in darkness. The Triforce was divided into three—its tempting
+/// power out of any one person's reach.
+///
+/// One part stayed with the royal family, while another slipped into Ganon's
+/// possession. Legend says that the third part found its home in the heart of
+/// the hero eternal...
+///
+/// And while legends come to us from the distant past,
+/// others have yet to be written...
+pub fn aLinkBetweenWorlds(T: type, comptime next: anytype, comptime prev: anytype) type {
+    return doublyLinkedList(T, next, prev);
+}
+
+/// Provides a container with functions implementing singly-linkèd node
+/// behavior for the type, and a SinglyLinkedList type for making use
+/// of such lists.  `next_name` must be a string or enum literal which
+/// represents a field of type `?*Node` on Node itself.
+///
+/// It is legal to call this several times with different field names.
+/// You will however need to deal with the name collisions manually.
+pub fn singlyLinkedList(Node: type, comptime next_name: anytype) type {
     // String-ify potential enum literal:
     const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
         @tagName(next_name)
@@ -22,17 +88,33 @@ pub fn singleLink(Node: type, comptime next_name: anytype) type {
     return struct {
         //| Node functions
 
+        pub const ThisNode = @This(); // Needed for calling declarations in SinglyLinkedList
+
         /// Insert the argument node after the receiver node.
         pub fn insertAfter(node: *Node, new_node: *Node) void {
             @field(new_node, next) = @field(node, next);
             @field(node, next) = new_node;
         }
 
-        /// Remove the node after the one provided, returning it.
+        /// Remove the node after the one provided, returning it. Node will be
+        /// linked to the node after that, if any.  If a node is returned, its
+        /// next field will be null.
         pub fn removeNext(node: *Node) ?*Node {
             const next_node = @field(node, next) orelse return null;
             @field(node, next) = @field(next_node, next);
+            @field(next_node, next) = null;
             return next_node;
+        }
+
+        /// Swaps the node's position with the Node at `next`.  If no such
+        /// Node exists, nothing happens, and `null` is returned.  The
+        /// now-previous node is returned, in case it might be useful, as,
+        /// for example, if `node` is `.first` in a SinglyLinkedList, and
+        /// must therefore be replaced as head.
+        pub fn swap(node: *Node) ?*Node {
+            const next_node = @field(node, next) orelse return null;
+            @field(node, next) = @field(next_node, next);
+            @field(next_node, next) = node;
         }
 
         /// Iterate over the singly-linked list from this node, until the final
@@ -90,24 +172,47 @@ pub fn singleLink(Node: type, comptime next_name: anytype) type {
                 list.first = new_node;
             }
 
-            /// Find and remove `node` from the list.  This compares pointers,
-            /// not values.
-            pub fn remove(list: *SinglyLinkedList, node: *Node) void {
-                if (list.first == node) {
-                    list.first = @field(node, next);
+            /// This is not a place of honor.  No esteemed deed is commemorated
+            /// here.  We thought we were a powerful culture.  What is here is
+            /// repulsive to us.  Repeated use of append is O(n^2).  Contemplate
+            /// this on the tree of woe.
+            pub fn append(list: *SinglyLinkedList, new_node: *Node) void {
+                if (list.first) |f| {
+                    var last = ThisNode.findLast(f);
+                    @field(last, next) = new_node;
                 } else {
-                    var current_elm = list.first.?;
-                    while (@field(current_elm, next) != node) {
-                        current_elm = @field(current_elm, next).?;
-                    }
-                    @field(current_elm, next) = @field(node, next);
+                    list.first = new_node;
                 }
             }
 
-            /// Remove and return the first node in the list.
+            /// Find and remove `node` from the list.  This compares pointers,
+            /// not values.  It is valid  to 'remove' a node which is not in
+            /// the list, which does not make it a good idea.  If the node is
+            /// found in the list, the 'next' field will be `null`, if it is
+            /// not, the field will not change.
+            pub fn remove(list: *SinglyLinkedList, node: *Node) void {
+                if (list.first == node) {
+                    list.first = @field(node, next);
+                    @field(node, next) = null;
+                } else {
+                    var current_elm = list.first.?;
+                    while (@field(current_elm, next)) |next_elm| {
+                        if (next_elm == node) {
+                            @field(current_elm, next) = @field(node, next);
+                            @field(node, next) = null;
+                        } else {
+                            current_elm = next_elm;
+                        }
+                    }
+                }
+            }
+
+            /// Remove and return the first node in the list, should one be
+            /// present.
             pub fn popFirst(list: *SinglyLinkedList) ?*Node {
                 const first = list.first orelse return null;
                 list.first = @field(first, next);
+                @field(first, next) = null;
                 return first;
             }
 
@@ -117,7 +222,7 @@ pub fn singleLink(Node: type, comptime next_name: anytype) type {
             /// computing it.
             pub fn len(list: SinglyLinkedList) usize {
                 if (list.first) |n| {
-                    return 1 + n.countChildren();
+                    return 1 + ThisNode.countChildren(n);
                 } else {
                     return 0;
                 }
@@ -126,6 +231,280 @@ pub fn singleLink(Node: type, comptime next_name: anytype) type {
     };
 }
 
+/// The possible positions of a doubly-linked node within a
+/// list of same.
+pub const DoubleLinkedListPosition = enum {
+    first,
+    last,
+    middle,
+    solo,
+};
+
+/// Returns a container type with methods for working with the DNode type as nodes in a
+/// doubly-linked list, using the field names `next_name` and `prev_name`.  The container also
+/// contains a `DoublyLinkedList` type specialized to this type of node.  It is valid to call
+/// this for multiple _disjoint_ pairs of fields, however you will need to deal with name
+/// collisions manually in the original struct.
+pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_name: anytype) type {
+    // String-ify potential enum literal:
+    const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
+        @tagName(next_name)
+    else // If it coerces, it works:
+        next_name;
+
+    const prev: []const u8 = if (@typeInfo(@TypeOf(prev_name)) == .enum_literal)
+        @tagName(prev_name)
+    else // If it coerces, it works:
+        prev_name;
+
+    verifyFieldType(DNode, next);
+    verifyFieldType(DNode, prev);
+
+    //| Stdlib provides no functions for the Node type itself, for reasons which are unclear.
+    //| We will take the approach of providing primitives for Operations on Nodes, suitable
+    //| for ad-hoc use without employing the DoublyLinkedList type.
+
+    return struct {
+        /// Insert the receiver node after the parameter node.
+        pub fn insertAfter(node: *DNode, new_node: *DNode) void {
+            @field(new_node, prev) = node;
+            if (@field(node, next)) |next_node| {
+                // Intermediate node.
+                @field(new_node, next) = next_node;
+                @field(next_node, prev) = new_node;
+            } else {
+                // Last element of the list.
+                @field(new_node, next) = null;
+            }
+            @field(node, next) = new_node;
+        }
+
+        /// Insert the receiver node before the parameter node.
+        pub fn insertBefore(node: *DNode, new_node: *DNode) void {
+            @field(new_node, next) = node;
+            if (@field(node, prev)) |prev_node| {
+                // Intermediate node.
+                @field(new_node, prev) = prev_node;
+                @field(prev_node, next) = new_node;
+            } else {
+                // First element of the list.
+                @field(new_node, prev) = null;
+            }
+            @field(node, prev) = new_node;
+        }
+
+        /// Return the position of the node within some unspecified list.
+        pub fn positionInList(node: *DNode) DoubleLinkedListPosition {
+            if (@field(node, prev)) |_| {
+                if (@field(node, next)) |_| {
+                    return .middle;
+                } else {
+                    return .last;
+                }
+            } else if (@field(node, next)) |_| {
+                return .first;
+            } else {
+                return .solo;
+            }
+        }
+
+        /// Remove the receiver node from the linked list.  Use carefully!
+        /// This can strand memory and lead to a leak.  Prefer to use the
+        /// function `remove` on the DoublyLinkedList type.
+        /// If `node.positionInList() == .middle`, this will not strand
+        /// either end of a properly-constituted list.
+        pub fn removeSelfFromList(node: *DNode) void {
+            if (@field(node, prev)) |prev_node| {
+                if (@field(node, next)) |next_node| {
+                    @field(prev_node, next) = next_node;
+                    @field(next_node, prev) = prev_node;
+                } else {
+                    @field(prev_node, next) = null;
+                }
+            } else if (@field(node, next)) |next_node| {
+                @field(next_node, prev) = null;
+            } else return;
+            @field(node, prev) = null;
+            @field(node, next) = null;
+        }
+
+        /// Unlink from the next structure, if any.  Returns the unlinked
+        /// struct, or null.
+        pub fn unlinkNext(node: *DNode) ?*DNode {
+            const this_next = @field(node, next) orelse return null;
+            @field(this_next, prev) = null;
+            @field(node, next) = null;
+            return this_next;
+        }
+
+        /// Unlink from the previous structure, if any.  Returns the unlinked
+        /// struct, or null.
+        pub fn unlinkPrev(node: *DNode) ?*DNode {
+            const this_prev = @field(node, prev) orelse return null;
+            @field(this_prev, next) = null;
+            @field(node, prev) = null;
+            return this_prev;
+        }
+
+        /// Swaps this node's position with the position of `node.next`.  If
+        /// it is `null`, nothing happens.  This can invalidate the last node
+        /// in a DoublyLinkedList, this condition can be detected (given
+        /// otherwise proper use) if `node.next` is `null` after the call.
+        pub fn swapForward(node: *DNode) void {
+            const this_next = @field(node, next) orelse return;
+            const next_after = @field(this_next, next);
+            @field(node, next) = next_after;
+            if (next_after) |after| @field(after, prev) = node;
+            @field(node, prev) = this_next;
+            @field(this_next, next) = node;
+        }
+
+        /// Swaps this node's position with the position of `node.prev`.  If
+        /// it is `null`, nothing happens.  This can invalidate the first node
+        /// in a DoublyLinkedList, this condition can be detected (given
+        /// otherwise proper use) if `node.prev` is `null` after the call.
+        pub fn swapBackward(node: *DNode) void {
+            const this_prev = @field(node, prev) orelse return;
+            const prev_before = @field(this_prev, prev);
+            @field(node, prev) = prev_before;
+            if (prev_before) |before| @field(before, next) = node;
+            @field(node, next) = this_prev;
+            @field(this_prev, prev) = node;
+        }
+
+        /// Multiple intrusive lists being possible, we always call functions
+        /// from the type, not as members.
+        const ThisNode = @This();
+
+        /// DoublyLinkedList type for provided data structure.  Create with the `.empty`
+        /// declaration literal.
+        pub const DoublyLinkedList = struct {
+            first: ?*DNode,
+            last: ?*DNode,
+
+            pub const empty: DoublyLinkedList = .{ .first = null, .last = null };
+
+            /// Inserts `new_node` after `existing_node`, adjusting `list.last` if needed.
+            pub fn insertAfter(list: *DoublyLinkedList, existing_node: *DNode, new_node: *DNode) void {
+                ThisNode.insertAfter(existing_node, new_node);
+                // If new_node is inserted at the end of the list, its 'next' will be null:
+                if (@field(new_node, next) == null) {
+                    list.last = new_node;
+                }
+            }
+
+            /// Inserts `new_node` before `existing_node`, adjusting `list.first` if needed.
+            pub fn insertBefore(list: *DoublyLinkedList, existing_node: *DNode, new_node: *DNode) void {
+                ThisNode.insertBefore(existing_node, new_node);
+                // If new_node is inserted at the front of the list, its 'prev' will be null:
+                if (@field(new_node, prev) == null) {
+                    list.first = new_node;
+                }
+            }
+
+            /// Concatenate list2 onto the end of list1, removing all entries from the former.
+            ///
+            /// Arguments:
+            ///     list1: the list to concatenate onto
+            ///     list2: the list to be concatenated
+            pub fn concatByMoving(list1: *DoublyLinkedList, list2: *DoublyLinkedList) void {
+                const l2_first = list2.first orelse return;
+                if (list1.last) |l1_last| {
+                    @field(l1_last, next) = list2.first;
+                    @field(l2_first, prev) = list1.last;
+                } else {
+                    // list1 was empty
+                    list1.first = list2.first;
+                }
+                list1.last = list2.last;
+                list2.first = null;
+                list2.last = null;
+            }
+
+            /// Insert a new node at the end of the list.
+            ///
+            /// Arguments:
+            ///     new_node: Pointer to the new node to insert.
+            pub fn append(list: *DoublyLinkedList, new_node: *DNode) void {
+                if (list.last) |last| {
+                    // Insert after last.
+                    list.insertAfter(last, new_node);
+                } else {
+                    // Empty list.
+                    list.prepend(new_node);
+                }
+            }
+
+            /// Insert a new node at the beginning of the list.
+            ///
+            /// Arguments:
+            ///     new_node: Pointer to the new node to insert.
+            pub fn prepend(list: *DoublyLinkedList, new_node: *DNode) void {
+                if (list.first) |first| {
+                    // Insert before first.
+                    list.insertBefore(first, new_node);
+                } else {
+                    // Empty list.
+                    list.first = new_node;
+                    list.last = new_node;
+                    @field(new_node, prev) = null;
+                    @field(new_node, next) = null;
+                }
+            }
+
+            /// Remove a node from the list.  Assumes this node belongs to
+            /// this list.
+            ///
+            /// Arguments:
+            ///     node: Pointer to the node to be removed.
+            pub fn remove(list: *DoublyLinkedList, node: *DNode) void {
+                switch (ThisNode.positionInList(node)) {
+                    .first => {
+                        list.first = ThisNode.unlinkNext(node);
+                    },
+                    .last => {
+                        list.last = ThisNode.unlinkPrev(node);
+                    },
+                    .middle => ThisNode.removeSelfFromList(node),
+                    .solo => {},
+                }
+            }
+
+            /// Remove and return the last node in the list.
+            ///
+            /// Returns:
+            ///     A pointer to the last node in the list.
+            pub fn pop(list: *DoublyLinkedList) ?*DNode {
+                const last = list.last orelse return null;
+                list.remove(last);
+                return last;
+            }
+
+            /// Remove and return the first node in the list.
+            ///
+            /// Returns:
+            ///     A pointer to the first node in the list.
+            pub fn popFirst(list: *DoublyLinkedList) ?*DNode {
+                const first = list.first orelse return null;
+                list.remove(first);
+                return first;
+            }
+
+            /// Iterate over all nodes, returning the count.
+            ///
+            /// This operation is O(N). Consider tracking the length separately rather than
+            /// computing it.
+            pub fn len(list: DoublyLinkedList) usize {
+                var count: usize = 0;
+                var it: ?*const DNode = list.first;
+                while (it) |n| : (it = @field(n, next)) count += 1;
+                return count;
+            }
+        };
+    };
+}
+
+// Satisfy ourselves that the type fulfills the necessary contract for the field.
 fn verifyFieldType(T: type, comptime field_name: []const u8) void {
     if (!@hasField(T, field_name)) {
         @compileError("The field name provided is not valid for the type");
@@ -166,7 +545,7 @@ const Hyrule = struct {
     pub usingnamespace aLinkToThePast(Hyrule, .next_member);
 };
 
-test "links" {
+test Hyrule {
     var this: Hyrule = .init(23);
     var that: Hyrule = .init(42);
     this.insertAfter(&that);
@@ -175,7 +554,7 @@ test "links" {
     try expectEqual(&that, that_again);
 }
 
-test "basics" {
+test "A Link to the Past" {
     const L = struct {
         data: u32,
         node: ?*@This() = null,
@@ -224,4 +603,65 @@ test "basics" {
     try testing.expect(list.first.?.data == 4);
     try testing.expect(list.first.?.node.?.data == 2);
     try testing.expect(list.first.?.node.?.node == null);
+}
+
+test "A Link Between Worlds" {
+    const L = struct {
+        data: u32,
+        forward: ?*@This() = null,
+        backward: ?*@This() = null,
+
+        pub usingnamespace aLinkBetweenWorlds(@This(), "forward", .backward);
+    };
+    var list: L.DoublyLinkedList = .empty;
+
+    var one: L = .{ .data = 1 };
+    var two: L = .{ .data = 2 };
+    var three: L = .{ .data = 3 };
+    var four: L = .{ .data = 4 };
+    var five: L = .{ .data = 5 };
+
+    list.append(&two); // {2}
+    list.append(&five); // {2, 5}
+    list.prepend(&one); // {1, 2, 5}
+    list.insertBefore(&five, &four); // {1, 2, 4, 5}
+    list.insertAfter(&two, &three); // {1, 2, 3, 4, 5}
+
+    try testing.expect(list.first != null);
+    try testing.expect(list.last != null);
+
+    // Traverse forwards.
+    {
+        var it = list.first;
+        var index: u32 = 1;
+        while (it) |node| : (it = node.forward) {
+            try testing.expect(node.data == index);
+            index += 1;
+        }
+        try testing.expectEqual(6, index);
+    }
+
+    // Traverse backwards.
+    {
+        var it = list.last;
+        var index: u32 = 1;
+        while (it) |node| : (it = node.backward) {
+            try testing.expect(node.data == (6 - index));
+            index += 1;
+        }
+        try testing.expectEqual(6, index);
+    }
+
+    try testing.expectEqual(1, list.popFirst().?.data); // {2, 3, 4, 5}
+    try testing.expectEqual(2, list.first.?.data);
+    try testing.expectEqual(5, list.last.?.data);
+
+    try testing.expectEqual(5, list.pop().?.data); // {2, 3, 4}
+    try testing.expectEqual(4, list.last.?.data);
+
+    list.remove(&three); // {2, 4}
+    try testing.expectEqual(2, list.first.?.data);
+    try testing.expectEqual(4, list.last.?.data);
+
+    try testing.expect(list.len() == 2);
 }
