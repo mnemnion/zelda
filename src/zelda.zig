@@ -384,7 +384,7 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
 
             // A <-> C
             @field(node, prev) = nodeA;
-            if (nodeA) |before| @field(before, next) = node;
+            if (nodeA) |A| @field(A, next) = node;
 
             // C <-> B
             @field(node, next) = nodeB;
@@ -395,10 +395,37 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
             if (nodeD) |D| @field(D, prev) = nodeB;
         }
 
+        /// Splices the list in the `next` direction of the receiver.  The list
+        /// is not cleared and will be in an invalid state.  It is checked illegal
+        /// behavior for `list` to be empty.  Prefer to use `spliceForwardOf` on
+        /// the list containing the node.
+        pub fn spliceForward(node: *DNode, list: *DoublyLinkedList) void {
+            const node_next = ThisNode.unlinkNext(node);
+
+            @field(node, next) = list.first;
+            @field(list.first.?, prev) = node;
+
+            @field(list.last.?, next) = node_next;
+            if (node_next) |nn| @field(nn, prev) = list.last;
+        }
+
+        /// Slices the list in the `prev` direction of the receiver.  The list is
+        /// not cleared and will be in an invalid state.  It is checked illegal
+        /// behavior for `list` to be empty.  Prefer to use `spliceBackwardOf` on
+        /// the list containing the node.
+        pub fn spliceBackward(node: *DNode, list: *DoublyLinkedList) void {
+            const node_prev = ThisNode.unlinkPrev(node);
+            @field(node, prev) = list.last;
+            @field(list.last.?, next) = node;
+
+            @field(list.first.?, prev) = node_prev;
+            if (node_prev) |np| @field(np, next) = list.first;
+        }
+
         /// Answers whether the node is in a well-formed double linked
         /// list when following the 'next' pointers.  Perhaps surprisingly,
         /// this answers `true` if `node.next` is `null`.  A `false` answer
-        /// means there's a problem with your list, this is a diagnostic
+        /// means there's a problem with your list.  This is a diagnostic
         /// tool.  If `node.prev` is `null`, this will detect a forward half
         /// cyle as a broken link.
         pub fn inDoubleLinkedListForward(node: *DNode) bool {
@@ -415,7 +442,7 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
         /// Answers whether the node is in a well-formed double linked
         /// list when following the 'prev' pointers.  Perhaps surprisingly,
         /// this answers `true` if `node.prev` is `null`.  A `false` answer
-        /// means there's a problem with your list, this is a diagnostic
+        /// means there's a problem with your list.  This is a diagnostic
         /// tool.  If `node.next` is `null`, this will detect a backward half
         /// cycle as a broken link.
         pub fn inDoubleLinkedListBackward(node: *DNode) bool {
@@ -531,6 +558,67 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
                 list2.last = null;
             }
 
+            /// Extract the range from `from` to `to` as a new linked list, healing the gap in the list
+            /// thereby created.  Assumes that `from` and `to` are valid members of `list`, and that `to`
+            /// may be found in the `next` direction starting from `from`.  No `prev` equivalent is provided,
+            /// simply switch `from` and `to`.  It is valid for `from` to be `list.first`, or for `to` to be
+            /// `list.last`; `from` and `to` may not be identical.
+            pub fn extractRange(list: *DoublyLinkedList, from: *DNode, to: *DNode) DoublyLinkedList {
+                const from_prev = ThisNode.unlinkPrev(from);
+                const to_next = ThisNode.unlinkNext(to);
+                if (from_prev) |now_prev| {
+                    if (to_next) |now_next| {
+                        // These were both middle nodes
+                        @field(now_prev, next) = now_next;
+                        @field(now_next, prev) = now_prev;
+                    } else {
+                        // `to` is assumed to be the last node,
+                        // so now, now_prev is the last
+                        list.last = now_prev;
+                    }
+                } else {
+                    // `from` was the first.  We need to know if
+                    // `to` was the last so we can make the list empty.
+                    if (to_next) |now_next| {
+                        // It was not:
+                        list.first = now_next;
+                    } else {
+                        // It was:
+                        list.first = null;
+                        list.last = null;
+                    }
+                }
+                return .{ .first = from, .last = to };
+            }
+
+            /// Splices `list2` `next` to the parameter `node`.  When this function returns, `list2`
+            /// will be empty.  This is valid to call when `node` is either the first or the last node
+            /// on the receiver list, but if this is known to be the case, prefer `concatByMoving`.  It is
+            /// assumed that `list` has contents (at least `node`), and checked illegal behavior if `list2`
+            /// does not.
+            pub fn spliceForwardOf(list: *DoublyLinkedList, node: *DNode, list2: *DoublyLinkedList) void {
+                ThisNode.spliceForward(node, list2);
+                if (list.last == node) {
+                    list.last = list2.last;
+                }
+                list2.first = null;
+                list2.last = null;
+            }
+
+            /// Splices `list2` `prev` to the parameter `node`.  When this function returns, `list2`
+            /// will be empty.  This is valid to call when `node` is either the first or the last node
+            /// on the receiver list, but if this is known to be the case, prefer `concatByMoving`.  It is
+            /// assumed that `list` has contents (at least `node`), and checked illegal behavior if `list2`
+            /// does not.
+            pub fn spliceBackwardOf(list: *DoublyLinkedList, node: *DNode, list2: *DoublyLinkedList) void {
+                ThisNode.spliceBackward(node, list2);
+                if (list.first == node) {
+                    list.first = list2.first;
+                }
+                list2.first = null;
+                list2.last = null;
+            }
+
             /// Insert a new node at the end of the list.
             ///
             /// Arguments:
@@ -609,6 +697,11 @@ pub fn doublyLinkedList(DNode: type, comptime next_name: anytype, comptime prev_
                 var it: ?*const DNode = list.first;
                 while (it) |n| : (it = @field(n, next)) count += 1;
                 return count;
+            }
+
+            /// Answers whether the list is empty.
+            pub inline fn isEmpty(list: DoublyLinkedList) bool {
+                return list.first == null and list.last == null;
             }
         };
     };
@@ -813,7 +906,7 @@ test "A Link Between Worlds" {
     try testing.expect(list.len() == 2);
 }
 
-test "concatenation" {
+test "concatenation and splicing" {
     const L = struct {
         data: u32,
         next: ?*@This() = null,
@@ -842,6 +935,7 @@ test "concatenation" {
     try testing.expect(list1.len() == 5);
     try testing.expect(list2.first == null);
     try testing.expect(list2.last == null);
+    try testing.expect(list2.isEmpty());
     try testing.expect(list2.len() == 0);
 
     // Traverse forwards.
@@ -868,6 +962,8 @@ test "concatenation" {
 
     // Swap them back, this verifies that concatenating to an empty list works.
     list2.concatByMoving(&list1);
+    try testing.expect(!list2.isEmpty());
+    try testing.expect(list1.isEmpty());
 
     // Traverse forwards.
     {
@@ -886,6 +982,59 @@ test "concatenation" {
         var index: u32 = 1;
         while (it) |node| : (it = node.prev) {
             try testing.expect(node.data == (6 - index));
+            index += 1;
+        }
+        try testing.expectEqual(6, index);
+    }
+
+    // Swap again
+    list1.concatByMoving(&list2);
+
+    // Extract a range.
+    var sublist = list1.extractRange(&two, &four);
+    _ = &sublist;
+
+    try testing.expect(sublist.first == &two);
+    try testing.expect(sublist.last == &four);
+    try testing.expect(list1.first == &one);
+    try testing.expect(list1.last == &five);
+    try testing.expect(list1.first == list1.last.?.prev);
+    try testing.expect(list1.first.?.next == list1.last);
+
+    // Put it back
+    list1.spliceForwardOf(&one, &sublist);
+    try testing.expect(sublist.isEmpty());
+
+    // Check we got our list back
+    {
+        var it = list1.first;
+        var index: u32 = 1;
+        while (it) |node| : (it = node.next) {
+            try testing.expectEqual(index, node.data);
+            index += 1;
+        }
+        try testing.expectEqual(6, index);
+    }
+
+    // Extract again
+    sublist = list1.extractRange(&two, &four);
+
+    try testing.expect(sublist.first == &two);
+    try testing.expect(sublist.last == &four);
+    try testing.expect(list1.first == &one);
+    try testing.expect(list1.last == &five);
+    try testing.expect(list1.first == list1.last.?.prev);
+    try testing.expect(list1.first.?.next == list1.last);
+
+    // Replace it on the other side
+    list1.spliceBackwardOf(&five, &sublist);
+
+    // Verify, backward this time.
+    {
+        var it = list1.last;
+        var index: u32 = 1;
+        while (it) |node| : (it = node.prev) {
+            try testing.expectEqual((6 - index), node.data);
             index += 1;
         }
         try testing.expectEqual(6, index);
