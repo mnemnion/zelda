@@ -19,8 +19,8 @@ const Monster = struct {
     mana: u16,
     health: u16,
     // ...
-    next: ?*@This(),
-    previous: ?*@This(),
+    next: ?*@This() = null, // Probably a good idea
+    previous: ?*@This() = null,
 
     // The fun part:
     pub usingnamespace zelda.aLinkBetweenWorlds(@This(), .next, .previous);
@@ -47,7 +47,7 @@ Say you prefer, as indeed you might, a _singly_ linked list? We have that as wel
 ```zig
 const Chunk64 = struct {
     data: [64]u8 = undefined;
-    next_free: ?*@This(),
+    next_free: ?*@This() = null,
 
     pub usingnamespace zelda.aLinkToThePast(@This(), .next);
 
@@ -78,7 +78,7 @@ Strictly, these are "tradeoffs", but ones I happen to think will be advantageous
 
 In the stdlib vision of linking, the links are fully generic.  They have a type, it's up to the user to keep an eye on which kind of list it makes sense to put a given Node onto.  `zelda` makes this a compiler problem instead of a you problem.
 
-The pointers also point (or do not) to the data itself, not to field in the data.  There is no need to calculate the offset of the head of the structure using `@fieldParentPointer`, and therefore, no opportunity to evince unchecked illegal behavior due to a mistake in calculating that offset.  There are plans to make this sort of thing _checked_ illegal behavior, which I welcome, but I prefer compile time errors to their run time cousins.
+The pointers also point (or do not) to the data itself, not to a field in the data.  There is no need to calculate the offset of the head of the structure using `@fieldParentPointer`, and therefore, no opportunity to evince unchecked illegal behavior due to a mistake in calculating that offset.  There are plans to make this sort of thing _checked_ illegal behavior, which I welcome, but I prefer compile time errors to their run time cousins.
 
 The _possible_ disadvantage is that these are _not_ generic, and therefore it is likely, but not guaranteed, that the compiler will specialize the various functions provided for each type which is sent to Hyrule to rescue the Princess.  A highly constrained embedded systems program might prefer to guarantee once-only compilation by using a generic type, and happily pay the bookkeeping cost and error risk of tracking types through the code to ensure proper behavior.
 

@@ -201,10 +201,11 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype) type {
                     @field(node, next) = null;
                 } else {
                     var current_elm = list.first.?;
-                    while (@field(current_elm, next)) |next_elm| {
+                    find: while (@field(current_elm, next)) |next_elm| {
                         if (next_elm == node) {
                             @field(current_elm, next) = @field(node, next);
                             @field(node, next) = null;
+                            break :find;
                         } else {
                             current_elm = next_elm;
                         }
