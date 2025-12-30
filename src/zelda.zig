@@ -29,8 +29,29 @@ const std = @import("std");
 ///
 /// Through evil magic, he began to make descendants of the seven wise men vanish,
 /// one after another. And the time of destiny for Princess Zelda is drawing near.
-pub fn aLinkToThePast(T: type, comptime next: anytype) type {
-    return singlyLinkedList(T, next);
+pub fn aLinkToThePast(T: type) type {
+    const next, const m_orderFn = extractSingleTypeInfo(T);
+    return singlyLinkedList(T, next, m_orderFn);
+}
+
+fn extractSingleTypeInfo(T: type) struct { []const u8, ?[]const u8 } {
+    const t_info = @typeInfo(T);
+    if (t_info != .@"struct") @compileError("Link needs to be a struct");
+    for (t_info.@"struct".fields) |field| {
+        if (field.type == ?*T) {
+            const next_str = field.name;
+            if (@hasDecl(T, "zeldaOrderFn")) {
+                return .{ next_str, "zeldaOrderFn" };
+            } else {
+                return null;
+            }
+        }
+    }
+    @compileError("Some field needs to be a link");
+}
+
+pub fn aLinkToThePastOld(T: type, comptime next: anytype) type {
+    return singlyLinkedListOld(T, next);
 }
 
 /// There is a legend oft told in Hyrule Kingdom.
@@ -76,7 +97,47 @@ pub fn aLinkBetweenWorlds(T: type, comptime next: anytype, comptime prev: anytyp
 ///
 /// It is legal to call this several times with different field names.
 /// You will however need to deal with the name collisions manually.
-pub fn singlyLinkedList(Node: type, comptime next_name: anytype) type {
+pub fn singlyLinkedList(T: type, comptime next_name: anytype, comptime m_orderFn: ?[]const u8) type {
+    const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
+        @tagName(next_name)
+    else // If it coerces, it works:
+        next_name;
+
+    _ = .{ next, m_orderFn }; // XXX:
+    return struct {
+        const Link = @This();
+        // Now we do a fun thing: find ourselves
+        const link = link: {
+            const t_info = @typeInfo(T);
+            if (t_info != .@"struct") @compileError("Link needs to be a struct");
+            const t_fields = @typeInfo(T).@"struct".fields;
+            for (t_fields) |field| {
+                if (field.type == Link) {
+                    break :link field.name;
+                }
+            }
+            @compileError("The return value must be a field on the Link struct. It's zero width, don't worry!");
+        };
+
+        pub fn returnLinkName() []const u8 {
+            return link;
+        }
+    };
+}
+
+test "circular weirdness?" {
+    const CircularLinker = struct {
+        next: ?*@This() = null,
+        link: LinkedIn = .{},
+
+        pub const LinkedIn = singlyLinkedList(@This(), "next", null);
+    };
+    const circler: CircularLinker = .{};
+    try expectEqual(null, circler.next);
+    try expectEqual("link", CircularLinker.LinkedIn.returnLinkName());
+}
+
+pub fn singlyLinkedListOld(Node: type, comptime next_name: anytype) type {
     // String-ify potential enum literal:
     const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
         @tagName(next_name)
@@ -746,7 +807,7 @@ const Hyrule = struct {
         return .{ .data = data };
     }
 
-    pub const linkedIn = aLinkToThePast(Hyrule, .next_member);
+    pub const linkedIn = aLinkToThePastOld(Hyrule, .next_member);
     pub const swap = linkedIn.swap;
     pub const removeNext = linkedIn.removeNext;
     pub const insertAfter = linkedIn.insertAfter;
@@ -769,7 +830,7 @@ test "A Link to the Past" {
         data: u32,
         node: ?*@This() = null,
 
-        pub const linkedIn = aLinkToThePast(@This(), .node);
+        pub const linkedIn = aLinkToThePastOld(@This(), .node);
         pub const SinglyLinkedList = linkedIn.SinglyLinkedList;
         pub const insertAfter = linkedIn.insertAfter;
         pub const reverse = linkedIn.reverse;
