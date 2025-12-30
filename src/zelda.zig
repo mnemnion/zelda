@@ -4,7 +4,15 @@
 //! the name of the field or fields which are linkable.
 //!
 
-const std = @import("std");
+/// A CPU-friendly version of std.math.Order.  At some point I
+/// expect Zig std to update to this version, at which point it
+/// will become a synonym.  Your `zeldaOrderFn` can return either
+/// this or the standard library's version; prefer this.
+pub const Order = enum(i2) {
+    lt = -1,
+    eq = 0,
+    gt = 1,
+};
 
 /// Long ago, in the beautiful kingdom of Hyrule surrounded by mountains and
 /// forests...
@@ -43,7 +51,7 @@ fn extractSingleTypeInfo(T: type) struct { []const u8, ?[]const u8 } {
             if (@hasDecl(T, "zeldaOrderFn")) {
                 return .{ next_str, "zeldaOrderFn" };
             } else {
-                return null;
+                return .{ next_str, null };
             }
         }
     }
@@ -97,31 +105,240 @@ pub fn aLinkBetweenWorlds(T: type, comptime next: anytype, comptime prev: anytyp
 ///
 /// It is legal to call this several times with different field names.
 /// You will however need to deal with the name collisions manually.
-pub fn singlyLinkedList(T: type, comptime next_name: anytype, comptime m_orderFn: ?[]const u8) type {
+pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orderFn: ?[]const u8) type {
     const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
         @tagName(next_name)
     else // If it coerces, it works:
         next_name;
 
-    _ = .{ next, m_orderFn }; // XXX:
     return struct {
         const Link = @This();
         // Now we do a fun thing: find ourselves
-        const link = link: {
-            const t_info = @typeInfo(T);
+        const link_field = link: {
+            const t_info = @typeInfo(Node);
             if (t_info != .@"struct") @compileError("Link needs to be a struct");
-            const t_fields = @typeInfo(T).@"struct".fields;
+            const t_fields = @typeInfo(Node).@"struct".fields;
             for (t_fields) |field| {
                 if (field.type == Link) {
                     break :link field.name;
                 }
             }
-            @compileError("The return value must be a field on the Link struct. It's zero width, don't worry!");
+            @compileError(
+                "The return value must be the type of a field" ++
+                    " on the Link struct. It's zero width, don't worry!",
+            );
         };
 
-        pub fn returnLinkName() []const u8 {
-            return link;
+        const has_order = m_orderFn != null;
+        const order_name = m_orderFn orelse "";
+
+        inline fn base(link: *Link) *Node {
+            return @fieldParentPtr(link_field, link);
         }
+
+        /// Insert the argument node after the receiver node.
+        pub fn insertAfter(link: *Link, new_node: *Node) void {
+            const node = base(link);
+            @field(new_node, next) = @field(node, next);
+            @field(node, next) = new_node;
+        }
+
+        /// Remove the node after the one provided, returning it. Node will be
+        /// linked to the node after that, if any.  If a node is returned, its
+        /// next field will be null.
+        pub fn removeNext(link: *Link) ?*Node {
+            const node = base(link);
+            const next_node = @field(node, next) orelse return null;
+            @field(node, next) = @field(next_node, next);
+            @field(next_node, next) = null;
+            return next_node;
+        }
+
+        /// Swaps the node's position with the Node at `next`.  If no such
+        /// Node exists, nothing happens, and `null` is returned.  The
+        /// now-previous node is returned, in case it might be useful, as,
+        /// for example, if `node` is `.first` in a SinglyLinkedList, and
+        /// must therefore be replaced as head.
+        pub fn swap(link: *Link) ?*Node {
+            const node = base(link);
+            const next_node = @field(node, next) orelse return null;
+            @field(node, next) = @field(next_node, next);
+            @field(next_node, next) = node;
+            return next_node;
+        }
+
+        /// Iterate over the singly-linked list from this node, until the final
+        /// node is found.
+        ///
+        /// This operation is O(N). Instead of calling this function, consider
+        /// using a different data structure.
+        pub fn findLast(link: *Link) *Node {
+            var it = base(link);
+            while (true) {
+                it = @field(it, next) orelse return it;
+            }
+        }
+
+        /// Iterate over each next node, returning the count of all nodes except
+        /// the starting one.
+        ///
+        /// This operation is O(N). Instead of calling this function, consider
+        /// using a different data structure.
+        pub fn countChildren(link: *const Link) usize {
+            const node: *const Node = base(link);
+            var count: usize = 0;
+            var it: ?*const Node = @field(node, next);
+            while (it) |n| : (it = @field(n, next)) {
+                count += 1;
+            }
+            return count;
+        }
+
+        /// Reverse the list starting from this node, returning the new head.
+        ///
+        /// This operation is O(N). Instead of calling this function, consider
+        /// using a different data structure.
+        pub fn reverse(link: *Link) *Node {
+            var current = base(link);
+            const indirect = &current;
+            while (@field(current, next)) |the_next| {
+                @field(current, next) = @field(the_next, next);
+                @field(the_next, next) = indirect.*;
+                indirect.* = the_next;
+            }
+            return indirect.*;
+        }
+
+        //| Singly Linked List container type
+
+        pub const SinglyLinkedList = struct {
+            first: ?*Node,
+            last: ?*Node,
+
+            pub const empty: SinglyLinkedList = .{ .first = null };
+
+            pub fn init(first: ?*Node) SinglyLinkedList {
+                return .{ .first = first, .last = first };
+            }
+
+            /// Prepend `new_node` as the first link in the list.
+            pub fn prepend(list: *SinglyLinkedList, new_node: *Node) void {
+                @field(new_node, next) = list.first;
+                list.first = new_node;
+                if (list.last == null) list.last = new_node;
+            }
+
+            /// Append a node to the end of the list. O(1).
+            pub fn append(list: *SinglyLinkedList, new_node: *Node) void {
+                if (list.last) |last| {
+                    @field(last, next) = new_node;
+                    list.last = new_node;
+                }
+                assert(list.first == null);
+                list.last = new_node;
+                list.first = new_node;
+            }
+
+            /// Find and remove `node` from the list.  This compares pointers,
+            /// not values.  It is valid  to 'remove' a node which is not in
+            /// the list, which does not make it a good idea.  If the node is
+            /// found in the list, the 'next' field will be `null`, if it is
+            /// not, the field will not change.
+            pub fn remove(list: *SinglyLinkedList, node: *Node) void {
+                if (list.first == node) {
+                    list.first = @field(node, next);
+                    if (list.last == node) {
+                        list.last = list.first;
+                    }
+                    @field(node, next) = null;
+                } else {
+                    var current_elm = list.first.?;
+                    find: while (@field(current_elm, next)) |next_elm| {
+                        if (next_elm == node) {
+                            @field(current_elm, next) = @field(node, next);
+                            @field(node, next) = null;
+                            if (list.last == node) {
+                                list.last = current_elm;
+                            }
+                            break :find;
+                        } else {
+                            current_elm = next_elm;
+                        }
+                    }
+                }
+            }
+
+            /// Reverse the order of the nodes in the list, in-place, in
+            /// O(1).  Valid to call on an empty list.
+            pub fn reverse(list: *SinglyLinkedList) void {
+                reverseNode(&list.first);
+            }
+
+            /// Concatenate the argument list to the end of the receiver list in O(1).
+            /// After this, the argument list will be empty.
+            pub fn concat(list: *SinglyLinkedList, l2: *SinglyLinkedList) void {
+                if (list.last) |last| {
+                    @field(last, next) = l2.first;
+                    list.last = l2.last;
+                    l2.first = null;
+                    l2.last = null;
+                    return;
+                }
+                assert(list.first == null);
+                list.first = l2.first;
+                list.last = l2.last;
+            }
+
+            /// Remove and return the first node in the list, should one be
+            /// present.
+            pub fn popFirst(list: *SinglyLinkedList) ?*Node {
+                const first = list.first orelse return null;
+                list.first = @field(first, next);
+                @field(first, next) = null;
+                if (list.last == first) list.last = null;
+                return first;
+            }
+
+            /// Iterate over all nodes, returning the count.
+            ///
+            /// This operation is O(N). Consider tracking the length separately rather than
+            /// computing it.
+            pub fn len(list: *const SinglyLinkedList) usize {
+                if (list.first) |n| {
+                    return 1 + @field(n, link_field).countChildren();
+                } else {
+                    return 0;
+                }
+            }
+
+            /// Answer if the list is empty.  This also asserts that the list is
+            /// well-formed: either both fields are populated, or neither.
+            pub fn isEmpty(list: *const SinglyLinkedList) bool {
+                if (list.first) |_| {
+                    assert(list.last != null);
+                    return false;
+                } else {
+                    assert(list.last == null);
+                    return true;
+                }
+            }
+
+            // Reverse the list starting from this node in-place.
+            //
+            // This operation is O(N). Instead of calling this function, consider
+            // using a different data structure.
+            fn reverseNode(indirect: *?*Node) void {
+                if (indirect.* == null) {
+                    return;
+                }
+                var current: *Node = indirect.*.?;
+                while (@field(current, next)) |the_next| {
+                    @field(current, next) = @field(the_next, next);
+                    @field(the_next, next) = indirect.*;
+                    indirect.* = the_next;
+                }
+            }
+        };
     };
 }
 
@@ -134,7 +351,7 @@ test "circular weirdness?" {
     };
     const circler: CircularLinker = .{};
     try expectEqual(null, circler.next);
-    try expectEqual("link", CircularLinker.LinkedIn.returnLinkName());
+    // try expectEqual("link", CircularLinker.LinkedIn.returnLinkName());
 }
 
 pub fn singlyLinkedListOld(Node: type, comptime next_name: anytype) type {
@@ -1195,3 +1412,6 @@ test "cycles" {
     try testing.expect(glen.inCycleBackward());
     try testing.expect(glen.inCycleForward());
 }
+
+const std = @import("std");
+const assert = std.debug.assert;
