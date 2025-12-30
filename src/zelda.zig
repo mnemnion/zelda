@@ -83,7 +83,7 @@ pub fn aLinkBetweenWorlds(T: type, comptime next: anytype, comptime prev: anytyp
 /// represents a field of type `?*Node` on Node itself.
 ///
 /// It is legal to call this several times with different field names,
-/// or different order function declarations, mix and match your choice.
+/// or different order function declarations, mix and match, your choice.
 pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orderFn: ?[]const u8) type {
     const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
         @tagName(next_name)
@@ -97,11 +97,12 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
 /// https://github.com/ziglang/zig/issues/23362
 /// https://github.com/ziglang/zig/issues/24636
 fn singlyLinkedListInner(Node: type, info: anytype) type {
+    const info_has_orderFn = @hasField(@TypeOf(info), "orderFn");
     const m_next: ?[]const u8 = if (@hasField(@TypeOf(info), "name")) info.name else null;
-    const m_orderFn: ?[]const u8 = if (@hasField(@TypeOf(info), "orderFn")) info.orderFn else null;
+    const m_orderFn: ?[]const u8 = if (info_has_orderFn) info.orderFn else null;
 
-    return struct {
-        const Link = @This();
+    return struct { // Sema entering this definition resolves Link:
+        const Link = @This(); // Making @typeInfo(Node) legal
         // Now we do a fun thing: find ourselves
         const link_field = link: {
             const t_info = @typeInfo(Node);
@@ -131,8 +132,8 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             );
         };
 
-        const has_order = m_orderFn != null;
-        const order_name = m_orderFn orelse "";
+        const has_order = if (m_orderFn) |_| true else if (!info_has_orderFn) @hasDecl(Node, "zeldaOrderFn") else false;
+        const order_name = if (m_orderFn) |orderFn| orderFn else if (has_order) "zeldaOrderFn" else "";
 
         inline fn base(link: *Link) *Node {
             return @alignCast(@fieldParentPtr(link_field, link));
@@ -171,7 +172,8 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         /// ```zig
         /// if (this_node.next) |next_node| {
         ///     this_node.next = next_node.link.swap();
-        ///     assert(next_node.next == null or this_node.next.next = next_node);
+        ///     assert((next_node.next == null and this_node.next == next_node) or
+        ///         this_node.next.next = next_node);
         /// }
         /// ```
         ///
@@ -288,18 +290,50 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                     }
                     @field(node, next) = null;
                 } else {
-                    var current_elm = list.first.?;
-                    find: while (@field(current_elm, next)) |next_elm| {
-                        if (next_elm == node) {
-                            @field(current_elm, next) = @field(node, next);
+                    var current = list.first.?;
+                    find: while (@field(current, next)) |next_node| {
+                        if (next_node == node) {
+                            @field(current, next) = @field(node, next);
                             @field(node, next) = null;
                             if (list.last == node) {
-                                list.last = current_elm;
+                                list.last = current;
                             }
                             break :find;
                         } else {
-                            current_elm = next_elm;
+                            current = next_node;
                         }
+                    }
+                }
+            }
+
+            /// Find and remove `node` from the list.  This compares pointers,
+            /// not values.  Asserts that `node` belongs to thie list.  If the
+            /// node is found in the list, the 'next' field will be `null`, if
+            /// it is not, the program will crash, or worse.  This might be
+            /// faster to use than plain `remove`, or it might just be more
+            /// dangerous to no actual benefit.  Benchmark or YOLO, it's your
+            /// circus.
+            pub fn removeUnchecked(list: *SinglyLinkedList, node: *Node) void {
+                if (list.first == node) {
+                    list.first = @field(node, next);
+                    if (list.last == node) {
+                        assert(list.first == null);
+                        list.last = list.first;
+                    }
+                    @field(node, next) = null;
+                } else {
+                    var current = list.first.?;
+                    while (true) {
+                        const next_node = @field(current, next).?;
+                        if (next_node == node) {
+                            @field(current, next) = @field(node, next);
+                            @field(node, next) = null;
+                            if (list.last == node) {
+                                list.last = current;
+                            }
+                            return;
+                        }
+                        current = next_node;
                     }
                 }
             }
@@ -393,18 +427,6 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             }
         };
     };
-}
-
-test "circular weirdness?" {
-    const CircularLinker = struct {
-        next: ?*@This() = null,
-        link: LinkedIn = .{},
-
-        pub const LinkedIn = singlyLinkedList(@This(), "next", null);
-    };
-    const circler: CircularLinker = .{};
-    try expectEqual(null, circler.next);
-    // try expectEqual("link", CircularLinker.LinkedIn.returnLinkName());
 }
 
 /// The possible positions of a doubly-linked node within a
