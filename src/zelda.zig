@@ -38,25 +38,7 @@ pub const Order = enum(i2) {
 /// Through evil magic, he began to make descendants of the seven wise men vanish,
 /// one after another. And the time of destiny for Princess Zelda is drawing near.
 pub fn aLinkToThePast(T: type) type {
-    const next, const m_orderFn = extractSingleTypeInfo(T);
-    return comptime singlyLinkedList(T, next, m_orderFn);
-}
-
-fn extractSingleTypeInfo(T: type) struct { []const u8, ?[]const u8 } {
-    const t_info = @typeInfo(T);
-    @compileLog(T);
-    if (t_info != .@"struct") @compileError("Link needs to be a struct");
-    for (t_info.@"struct".fields) |field| {
-        if (field.type == ?*T) {
-            const next_str = field.name;
-            if (false or @hasDecl(T, "zeldaOrderFn")) {
-                return .{ next_str, "zeldaOrderFn" };
-            } else {
-                return .{ next_str, null };
-            }
-        }
-    }
-    @compileError("Some field needs to be a link");
+    return singlyLinkedListInner(T, .{});
 }
 
 /// There is a legend oft told in Hyrule Kingdom.
@@ -100,13 +82,23 @@ pub fn aLinkBetweenWorlds(T: type, comptime next: anytype, comptime prev: anytyp
 /// of such lists.  `next_name` must be a string or enum literal which
 /// represents a field of type `?*Node` on Node itself.
 ///
-/// It is legal to call this several times with different field names.
-/// You will however need to deal with the name collisions manually.
+/// It is legal to call this several times with different field names,
+/// or different order function declarations, mix and match your choice.
 pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orderFn: ?[]const u8) type {
     const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
         @tagName(next_name)
     else // If it coerces, it works:
         next_name;
+    return singlyLinkedListInner(Node, .{ .name = next, .orderFn = m_orderFn });
+}
+
+/// We need to do this whole elaborate thing so that the `Link` type is resolved before the
+/// reference to the Link field is needed (@typeInfo):
+/// https://github.com/ziglang/zig/issues/23362
+/// https://github.com/ziglang/zig/issues/24636
+fn singlyLinkedListInner(Node: type, info: anytype) type {
+    const m_next: ?[]const u8 = if (@hasField(@TypeOf(info), "name")) info.name else null;
+    const m_orderFn: ?[]const u8 = if (@hasField(@TypeOf(info), "orderFn")) info.orderFn else null;
 
     return struct {
         const Link = @This();
@@ -114,7 +106,7 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
         const link_field = link: {
             const t_info = @typeInfo(Node);
             if (t_info != .@"struct") @compileError("Link needs to be a struct");
-            const t_fields = @typeInfo(Node).@"struct".fields;
+            const t_fields = t_info.@"struct".fields;
             for (t_fields) |field| {
                 if (field.type == Link) {
                     break :link field.name;
@@ -123,6 +115,19 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
             @compileError(
                 "The return value must be the type of a field" ++
                     " on the Link struct. It's zero width, don't worry!",
+            );
+        };
+
+        const next = m_next orelse next_name: {
+            const t_fields = @typeInfo(Node).@"struct".fields;
+            for (t_fields) |field| {
+                if (field.type == ?*Node) {
+                    break :next_name field.name;
+                }
+            }
+            @compileError(
+                "There must be a linked list field on " ++ @typeName(Node) ++
+                    " so we can d linked list things with it",
             );
         };
 
@@ -912,10 +917,7 @@ const Hyrule = struct {
         return .{ .data = data };
     }
 
-    pub const Link = singlyLinkedList(Hyrule, "next_member", null);
-    // TODO: figure out why this gives a "Hyrule depends on itself" error.
-    //
-    // pub const Link = aLinkToThePast(Hyrule);
+    pub const Link = aLinkToThePast(Hyrule);
 };
 
 test Hyrule {
