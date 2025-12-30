@@ -6,35 +6,28 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    
     const zelda_module = b.addModule("zelda", .{
         .root_source_file = b.path("src/zelda.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    _ = zelda_module; // autofix
-          
     const test_filters = b.option(
         []const []const u8,
         "test-filter",
         "Skip tests that do not match any filter",
     ) orelse &[0][]const u8{};
 
-    
     const module_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/zelda.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = zelda_module,
         .filters = test_filters,
     });
 
     const run_module_unit_tests = b.addRunArtifact(module_unit_tests);
-          
+
     const test_step = b.step("test", "Run unit tests");
-    
+
     test_step.dependOn(&run_module_unit_tests.step);
-        
 
     const addOutputDirectoryArg = comptime if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 13, .patch = 0 }) == .lt)
         std.Build.Step.Run.addOutputFileArg
@@ -59,5 +52,5 @@ pub fn build(b: *std.Build) void {
     });
 
     const coverage_step = b.step("coverage", "Generate coverage (kcov must be installed)");
-    coverage_step.dependOn(&install_coverage.step); 
+    coverage_step.dependOn(&install_coverage.step);
 }

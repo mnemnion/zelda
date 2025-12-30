@@ -746,7 +746,10 @@ const Hyrule = struct {
         return .{ .data = data };
     }
 
-    pub usingnamespace aLinkToThePast(Hyrule, .next_member);
+    pub const linkedIn = aLinkToThePast(Hyrule, .next_member);
+    pub const swap = linkedIn.swap;
+    pub const removeNext = linkedIn.removeNext;
+    pub const insertAfter = linkedIn.insertAfter;
 };
 
 test Hyrule {
@@ -766,7 +769,11 @@ test "A Link to the Past" {
         data: u32,
         node: ?*@This() = null,
 
-        pub usingnamespace aLinkToThePast(@This(), .node);
+        pub const linkedIn = aLinkToThePast(@This(), .node);
+        pub const SinglyLinkedList = linkedIn.SinglyLinkedList;
+        pub const insertAfter = linkedIn.insertAfter;
+        pub const reverse = linkedIn.reverse;
+        pub const removeNext = linkedIn.removeNext;
     };
 
     var list: L.SinglyLinkedList = .empty;
@@ -818,7 +825,17 @@ test "A Link Between Worlds" {
         forward: ?*@This() = null,
         backward: ?*@This() = null,
 
-        pub usingnamespace aLinkBetweenWorlds(@This(), "forward", .backward);
+        pub const linkedIn = aLinkBetweenWorlds(@This(), "forward", .backward);
+
+        pub const DoublyLinkedList = linkedIn.DoublyLinkedList;
+        pub const insertBefore = linkedIn.insertBefore;
+        pub const insertAfter = linkedIn.insertAfter;
+        pub const swapForward = linkedIn.swapForward;
+        pub const swapBackward = linkedIn.swapBackward;
+        pub const inDoubleLinkedListForward = linkedIn.inDoubleLinkedListForward;
+        pub const inDoubleLinkedListBackward = linkedIn.inDoubleLinkedListBackward;
+        pub const inCycleForward = linkedIn.inCycleForward;
+        pub const inCycleBackward = linkedIn.inCycleBackward;
     };
     var list: L.DoublyLinkedList = .empty;
 
@@ -913,8 +930,18 @@ test "concatenation and splicing" {
         next: ?*@This() = null,
         prev: ?*@This() = null,
 
-        pub usingnamespace aLinkBetweenWorlds(@This(), .next, "prev");
+        pub const linkedIn = aLinkBetweenWorlds(@This(), .next, "prev");
+        pub const DoublyLinkedList = linkedIn.DoublyLinkedList;
+        pub const insertBefore = linkedIn.insertBefore;
+        pub const insertAfter = linkedIn.insertAfter;
+        pub const swapForward = linkedIn.swapForward;
+        pub const swapBackward = linkedIn.swapBackward;
+        pub const inDoubleLinkedListForward = linkedIn.inDoubleLinkedListForward;
+        pub const inDoubleLinkedListBackward = linkedIn.inDoubleLinkedListBackward;
+        pub const inCycleForward = linkedIn.inCycleForward;
+        pub const inCycleBackward = linkedIn.inCycleBackward;
     };
+
     var list1: L.DoublyLinkedList = .empty;
     var list2: L.DoublyLinkedList = .empty;
 
@@ -1047,7 +1074,17 @@ test "cycles" {
         next: ?*@This() = null,
         prev: ?*@This() = null,
 
-        pub usingnamespace doublyLinkedList(@This(), .next, .prev);
+        pub const linkedIn = doublyLinkedList(@This(), .next, .prev);
+
+        pub const DoublyLinkedList = linkedIn.DoublyLinkedList;
+        pub const insertBefore = linkedIn.insertBefore;
+        pub const insertAfter = linkedIn.insertAfter;
+        pub const swapForward = linkedIn.swapForward;
+        pub const swapBackward = linkedIn.swapBackward;
+        pub const inDoubleLinkedListForward = linkedIn.inDoubleLinkedListForward;
+        pub const inDoubleLinkedListBackward = linkedIn.inDoubleLinkedListBackward;
+        pub const inCycleForward = linkedIn.inCycleForward;
+        pub const inCycleBackward = linkedIn.inCycleBackward;
     };
 
     var alice: Kid = .{};
