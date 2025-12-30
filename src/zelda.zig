@@ -37,18 +37,32 @@ pub const Order = enum(i2) {
 ///
 /// Through evil magic, he began to make descendants of the seven wise men vanish,
 /// one after another. And the time of destiny for Princess Zelda is drawing near.
-pub fn aLinkToThePast(T: type) type {
-    const next, const m_orderFn = extractSingleTypeInfo(T);
-    return singlyLinkedList(T, next, m_orderFn);
-}
-
-fn extractSingleTypeInfo(T: type) struct { []const u8, ?[]const u8 } {
+pub inline fn aLinkToThePast(T: type) type {
     const t_info = @typeInfo(T);
+    @compileLog(T);
     if (t_info != .@"struct") @compileError("Link needs to be a struct");
     for (t_info.@"struct".fields) |field| {
         if (field.type == ?*T) {
             const next_str = field.name;
-            if (@hasDecl(T, "zeldaOrderFn")) {
+            return singlyLinkedList(T, next_str, "zeldaOrderFn");
+            // if (false or @hasDecl(T, "zeldaOrderFn")) {
+            //     return singlyLinkedList(T, next_str, "zeldaOrderFn");
+            // } else {
+            //     return singlyLinkedList(T, next_str, null);
+            // }
+        }
+    }
+    @compileError("Some field needs to be a link");
+}
+
+inline fn extractSingleTypeInfo(T: type) struct { []const u8, ?[]const u8 } {
+    const t_info = @typeInfo(T);
+    @compileLog(T);
+    if (t_info != .@"struct") @compileError("Link needs to be a struct");
+    for (t_info.@"struct".fields) |field| {
+        if (field.type == ?*T) {
+            const next_str = field.name;
+            if (false or @hasDecl(T, "zeldaOrderFn")) {
                 return .{ next_str, "zeldaOrderFn" };
             } else {
                 return .{ next_str, null };
@@ -133,7 +147,7 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
         const order_name = m_orderFn orelse "";
 
         inline fn base(link: *Link) *Node {
-            return @fieldParentPtr(link_field, link);
+            return @alignCast(@fieldParentPtr(link_field, link));
         }
 
         /// Insert the argument node after the receiver node.
@@ -154,24 +168,32 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
             return next_node;
         }
 
-        /// Swaps the node's position with the Node at `next`.  If no such
-        /// Node exists, nothing happens, and `null` is returned.  The
-        /// now-previous node is returned, in case it might be useful, as,
-        /// for example, if `node` is `.first` in a SinglyLinkedList, and
-        /// must therefore be replaced as head.
-        pub fn swap(link: *Link) ?*Node {
+        /// Swaps the `node`'s position with the Node at `next`.  If no such
+        /// Node exists, then `node` is returned.  Otherwise, the now-previous
+        /// node is returned, and a good thing too, because the list is no
+        /// longer well-formed, which can be remedied by pointing whatever
+        /// next-field this node came from at the return value.  Use with care.
+        ///
+        /// # Example (assuming "next" and "link")
+        ///
+        /// ```zig
+        /// if (this_node.next) |next_node| {
+        ///     this_node.next = next_node.link.swap();
+        ///     assert(next_node.next == null or this_node.next.next = next_node);
+        /// }
+        /// ```
+        ///
+        /// You probably do not need this function.
+        pub fn swap(link: *Link) *Node {
             const node = base(link);
-            const next_node = @field(node, next) orelse return null;
+            const next_node = @field(node, next) orelse return node;
             @field(node, next) = @field(next_node, next);
             @field(next_node, next) = node;
             return next_node;
         }
 
         /// Iterate over the singly-linked list from this node, until the final
-        /// node is found.
-        ///
-        /// This operation is O(N). Instead of calling this function, consider
-        /// using a different data structure.
+        /// node is found.  O(n).  Prefer keeping a `SinglyLinkedList`.
         pub fn findLast(link: *Link) *Node {
             var it = base(link);
             while (true) {
@@ -180,10 +202,7 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
         }
 
         /// Iterate over each next node, returning the count of all nodes except
-        /// the starting one.
-        ///
-        /// This operation is O(N). Instead of calling this function, consider
-        /// using a different data structure.
+        /// the starting one.  O(n).
         pub fn countChildren(link: *const Link) usize {
             const node: *const Node = base(link);
             var count: usize = 0;
@@ -194,10 +213,7 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
             return count;
         }
 
-        /// Reverse the list starting from this node, returning the new head.
-        ///
-        /// This operation is O(N). Instead of calling this function, consider
-        /// using a different data structure.
+        /// Reverse the list starting from this node, returning the new head.  O(n).
         pub fn reverse(link: *Link) *Node {
             var current = base(link);
             const indirect = &current;
@@ -209,28 +225,55 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
             return indirect.*;
         }
 
+        /// Return the linked list to which this node belongs, in O(n).  It is
+        /// generally preferable to maintain the list _as_ a list, rather than
+        /// call this function.
+        pub fn toList(link: *Link) SinglyLinkedList {
+            const node = base(link);
+            const last = link.findLast();
+            return .{ .first = node, .last = last };
+        }
+
         //| Singly Linked List container type
 
+        /// A singly-linked list of `*Node`, comprising the first and last
+        /// elements of the list.  The API preserves the following properties:
+        ///
+        /// - If there is a first node, there will be a last.
+        /// - The last node's next-field will be `null`.  This type is not suitable
+        ///   for representing only the first part of a list, it can certainly
+        ///   represent the tail of one, or indeed, the tail of several.
+        ///
+        /// The API also asserts these properties often, so if your code does any
+        /// 'manual' manipulation of the list, take care to maintain them.
         pub const SinglyLinkedList = struct {
             first: ?*Node,
             last: ?*Node,
 
-            pub const empty: SinglyLinkedList = .{ .first = null };
+            pub const empty: SinglyLinkedList = .{ .first = null, .last = null };
 
             pub fn init(first: ?*Node) SinglyLinkedList {
                 return .{ .first = first, .last = first };
             }
 
-            /// Prepend `new_node` as the first link in the list.
+            /// Prepend `new_node` as the first link in the list.  It is not a
+            /// requirement that the next-field be unset, but this will happen
+            /// even if the list is empty.
             pub fn prepend(list: *SinglyLinkedList, new_node: *Node) void {
                 @field(new_node, next) = list.first;
+                if (list.last == null) {
+                    assert(list.first == null);
+                    list.last = new_node;
+                }
                 list.first = new_node;
-                if (list.last == null) list.last = new_node;
             }
 
-            /// Append a node to the end of the list. O(1).
+            /// Append a node to the end of the list. O(1). The node must
+            /// have a `null` next field.
             pub fn append(list: *SinglyLinkedList, new_node: *Node) void {
+                assert(@field(new_node, next) == null);
                 if (list.last) |last| {
+                    assert(@field(last, next) == null);
                     @field(last, next) = new_node;
                     list.last = new_node;
                 }
@@ -248,6 +291,7 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
                 if (list.first == node) {
                     list.first = @field(node, next);
                     if (list.last == node) {
+                        assert(list.first == null);
                         list.last = list.first;
                     }
                     @field(node, next) = null;
@@ -269,13 +313,14 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
             }
 
             /// Reverse the order of the nodes in the list, in-place, in
-            /// O(1).  Valid to call on an empty list.
+            /// O(1).  Legal to call on an empty list.
             pub fn reverse(list: *SinglyLinkedList) void {
                 reverseNode(&list.first);
             }
 
             /// Concatenate the argument list to the end of the receiver list in O(1).
-            /// After this, the argument list will be empty.
+            /// After this, the argument list will be empty.  It is legal for either
+            /// list, or both, to begin empty.
             pub fn concat(list: *SinglyLinkedList, l2: *SinglyLinkedList) void {
                 if (list.last) |last| {
                     @field(last, next) = l2.first;
@@ -289,8 +334,24 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
                 list.last = l2.last;
             }
 
+            /// Split the list into two, after the Node provided, returning the
+            /// new list.  The head of the new list will be `node.next`, the
+            /// tail of this one will be `node`.  Caller is responsible for
+            /// ensuring that `node` is a member of this list, nothing good will
+            /// happen if that isn't true.  Corollary: the list must not be
+            /// empty, and must in fact have no less than two members.  Asserts
+            /// it is not the last member of the list.
+            pub fn splitAfter(list: *SinglyLinkedList, node: *Node) SinglyLinkedList {
+                assert(list.last != null and list.last != node);
+                const new_first = @field(node, next);
+                const new_last = list.last;
+                list.last = node;
+                @field(node, next) = null;
+                return .{ .first = new_first, .last = new_last };
+            }
+
             /// Remove and return the first node in the list, should one be
-            /// present.
+            /// present.  There is no `popLast`.
             pub fn popFirst(list: *SinglyLinkedList) ?*Node {
                 const first = list.first orelse return null;
                 list.first = @field(first, next);
@@ -1018,27 +1079,26 @@ const expectEqual = testing.expectEqual;
 
 const Hyrule = struct {
     data: usize,
+    link: Link = .{},
     next_member: ?*Hyrule = null,
 
     pub fn init(data: usize) Hyrule {
         return .{ .data = data };
     }
 
-    pub const linkedIn = aLinkToThePastOld(Hyrule, .next_member);
-    pub const swap = linkedIn.swap;
-    pub const removeNext = linkedIn.removeNext;
-    pub const insertAfter = linkedIn.insertAfter;
+    // pub const Link = singlyLinkedList(Hyrule, "next_member", null);
+    pub const Link = aLinkToThePast(@This());
 };
 
 test Hyrule {
     var this: Hyrule = .init(23);
     var that: Hyrule = .init(42);
-    this.insertAfter(&that);
+    this.link.insertAfter(&that);
     try expectEqual(this.next_member.?, &that);
-    _ = this.swap();
+    _ = this.link.swap();
     try expectEqual(that.next_member.?, &this);
-    _ = that.swap();
-    const that_again = this.removeNext().?;
+    _ = that.link.swap();
+    const that_again = this.link.removeNext().?;
     try expectEqual(&that, that_again);
 }
 
