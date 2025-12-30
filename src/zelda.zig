@@ -77,8 +77,24 @@ pub fn aLinkBetweenWorlds(T: type) type {
     return doublyLinkedListInner(T, .{});
 }
 
-pub fn aLinkBetweenWorldsOld(T: type, comptime next: anytype, comptime prev: anytype) type {
-    return doublyLinkedListOld(T, next, prev);
+/// Returns a container type with methods for working with the Node type as nodes in a
+/// doubly-linked list, using the field names `next_name` and `prev_name`.  The container also
+/// contains a `DoublyLinkedList` type specialized to this type of node.  It is valid to call
+/// this for multiple _disjoint_ pairs of fields, however you will need to deal with name
+/// collisions manually in the original struct.
+pub fn doublyLinkedList(Node: type, comptime next_name: anytype, comptime prev_name: anytype, comptime m_orderFn: ?[]const u8) type {
+    // String-ify potential enum literal:
+    const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
+        @tagName(next_name)
+    else // If it coerces, it works:
+        next_name;
+
+    const prev: []const u8 = if (@typeInfo(@TypeOf(prev_name)) == .enum_literal)
+        @tagName(prev_name)
+    else // If it coerces, it works:
+        prev_name;
+
+    return doublyLinkedListInner(Node, .{ .next = next, .prev = prev, .orderFn = m_orderFn });
 }
 
 /// Provides a container with functions implementing singly-linkèd node
@@ -93,6 +109,7 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
         @tagName(next_name)
     else // If it coerces, it works:
         next_name;
+
     return singlyLinkedListInner(Node, .{ .next = next, .orderFn = m_orderFn });
 }
 
@@ -132,7 +149,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             }
             @compileError(
                 "There must be a linked list field on " ++ @typeName(Node) ++
-                    " so we can d linked list things with it",
+                    " so we can do linked list things with it",
             );
         };
 
@@ -311,7 +328,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             }
 
             /// Find and remove `node` from the list.  This compares pointers,
-            /// not values.  Asserts that `node` belongs to thie list.  If the
+            /// not values.  Asserts that `node` belongs to this list.  If the
             /// node is found in the list, the 'next' field will be `null`, if
             /// it is not, the program will crash, or worse.  This might be
             /// faster to use than plain `remove`, or it might just be more
@@ -343,7 +360,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             }
 
             /// Reverse the order of the nodes in the list, in-place, in
-            /// O(1).  Legal to call on an empty list.
+            /// O(n).  Legal to call on an empty list.
             pub fn reverse(list: *SinglyLinkedList) void {
                 reverseNode(&list.first);
             }
@@ -370,7 +387,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// ensuring that `node` is a member of this list, nothing good will
             /// happen if that isn't true.  Corollary: the list must not be
             /// empty, and must in fact have no less than two members.  Asserts
-            /// it is not the last member of the list.
+            /// it is not the last member of the list.  O(1).
             pub fn splitAfter(list: *SinglyLinkedList, node: *Node) SinglyLinkedList {
                 assert(list.last != null and list.last != node);
                 const new_first = @field(node, next);
@@ -392,8 +409,8 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
 
             /// Iterate over all nodes, returning the count.
             ///
-            /// This operation is O(N). Consider tracking the length separately rather than
-            /// computing it.
+            /// This operation is O(n). Consider tracking the length separately
+            /// rather than computing it.
             pub fn len(list: *const SinglyLinkedList) usize {
                 if (list.first) |n| {
                     return 1 + @field(n, link_field).countChildren();
@@ -415,9 +432,6 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             }
 
             // Reverse the list starting from this node in-place.
-            //
-            // This operation is O(N). Instead of calling this function, consider
-            // using a different data structure.
             fn reverseNode(indirect: *?*Node) void {
                 if (indirect.* == null) {
                     return;
@@ -447,7 +461,6 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
     const m_next: ?[]const u8 = if (@hasField(@TypeOf(info), "next")) info.next else null;
     const m_prev: ?[]const u8 = if (@hasField(@TypeOf(info), "prev")) info.prev else null;
     const m_orderFn: ?[]const u8 = if (info_has_orderFn) info.orderFn else null;
-    _ = .{ info_has_orderFn, m_next, m_prev, m_orderFn };
 
     return struct {
         const Link = @This(); // Making @typeInfo(Node) legal
@@ -467,33 +480,30 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             );
         };
 
-        //| TODO: There's probably a way to get both out without rummaging twice.
-
-        const next = m_next orelse next_name: {
+        const the_names: struct { []const u8, []const u8 } = if (m_next) |the_next| .{ the_next, m_prev.? } else next_names: {
+            var find_names: struct { []const u8, []const u8 } = undefined;
             const t_fields = @typeInfo(Node).@"struct".fields;
+            var first = true;
             for (t_fields) |field| {
                 if (field.type == ?*Node) {
-                    break :next_name field.name;
+                    if (first) {
+                        first = false;
+                        find_names.@"0" = field.name;
+                    } else {
+                        find_names.@"1" = field.name;
+                        break :next_names find_names;
+                    }
                 }
             }
             @compileError(
-                "There must be a linked list field on " ++ @typeName(Node) ++
-                    " so we can d linked list things with it",
+                "There must be two linked list fields on " ++ @typeName(Node) ++
+                    if (!first) " not just one," else "" ++
+                        " so we can do linked list things with it",
             );
         };
 
-        const prev = m_prev orelse prev_name: {
-            const t_fields = @typeInfo(Node).@"struct".fields;
-            for (t_fields) |field| {
-                if (field.type == ?*Node and !std.mem.eql(u8, next, field.name)) {
-                    break :prev_name field.name;
-                }
-            }
-            @compileError(
-                "There must be a linked list field on " ++ @typeName(Node) ++
-                    " so we can d linked list things with it",
-            );
-        };
+        const next = the_names.@"0";
+        const prev = the_names.@"1";
 
         const has_order = if (m_orderFn) |_| true else if (!info_has_orderFn) @hasDecl(Node, "zeldaOrderFn") else false;
         const order_name = if (m_orderFn) |orderFn| orderFn else if (has_order) "zeldaOrderFn" else "";
@@ -905,14 +915,14 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             /// Arguments:
             ///     node: Pointer to the node to be removed.
             pub fn remove(list: *DoublyLinkedList, node: *Node) void {
-                switch (@field(node, link_field).positionInList(node)) {
+                switch (@field(node, link_field).positionInList()) {
                     .first => {
-                        list.first = @field(node, link_field).unlinkNext(node);
+                        list.first = @field(node, link_field).unlinkNext();
                     },
                     .last => {
-                        list.last = @field(node, link_field).unlinkPrev(node);
+                        list.last = @field(node, link_field).unlinkPrev();
                     },
-                    .middle => @field(node, link_field).removeSelfFromList(node),
+                    .middle => @field(node, link_field).removeSelfFromList(),
                     .solo => {},
                 }
             }
@@ -954,493 +964,6 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             }
         };
     };
-}
-
-/// Returns a container type with methods for working with the DNode type as nodes in a
-/// doubly-linked list, using the field names `next_name` and `prev_name`.  The container also
-/// contains a `DoublyLinkedList` type specialized to this type of node.  It is valid to call
-/// this for multiple _disjoint_ pairs of fields, however you will need to deal with name
-/// collisions manually in the original struct.
-pub fn doublyLinkedListOld(DNode: type, comptime next_name: anytype, comptime prev_name: anytype) type {
-    // String-ify potential enum literal:
-    const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
-        @tagName(next_name)
-    else // If it coerces, it works:
-        next_name;
-
-    const prev: []const u8 = if (@typeInfo(@TypeOf(prev_name)) == .enum_literal)
-        @tagName(prev_name)
-    else // If it coerces, it works:
-        prev_name;
-
-    verifyFieldType(DNode, next);
-    verifyFieldType(DNode, prev);
-
-    //| Stdlib provides no functions for the Node type itself, for reasons which are unclear.
-    //| We will take the approach of providing primitives for Operations on Nodes, suitable
-    //| for ad-hoc use without employing the DoublyLinkedList type.
-
-    return struct {
-        /// Insert the receiver node after the parameter node.
-        pub fn insertAfter(node: *DNode, new_node: *DNode) void {
-            @field(new_node, prev) = node;
-            if (@field(node, next)) |next_node| {
-                // Intermediate node.
-                @field(new_node, next) = next_node;
-                @field(next_node, prev) = new_node;
-            } else {
-                // Last element of the list.
-            }
-            @field(node, next) = new_node;
-        }
-
-        /// Insert the receiver node before the parameter node.
-        pub fn insertBefore(node: *DNode, new_node: *DNode) void {
-            @field(new_node, next) = node;
-            if (@field(node, prev)) |prev_node| {
-                // Intermediate node.
-                @field(new_node, prev) = prev_node;
-                @field(prev_node, next) = new_node;
-            } else {
-                // First element of the list.
-            }
-            @field(node, prev) = new_node;
-        }
-
-        /// Return the position of the node within some unspecified list.
-        pub fn positionInList(node: *DNode) DoubleLinkedListPosition {
-            if (@field(node, prev)) |_| {
-                if (@field(node, next)) |_| {
-                    return .middle;
-                } else {
-                    return .last;
-                }
-            } else if (@field(node, next)) |_| {
-                return .first;
-            } else {
-                return .solo;
-            }
-        }
-
-        /// Remove the receiver node from the linked list.  Use carefully!
-        /// This can strand memory and lead to a leak.  Prefer to use the
-        /// function `remove` on the DoublyLinkedList type.
-        /// If `node.positionInList() == .middle`, this will not strand
-        /// either end of a properly-constituted list.
-        pub fn removeSelfFromList(node: *DNode) void {
-            if (@field(node, prev)) |prev_node| {
-                if (@field(node, next)) |next_node| {
-                    @field(prev_node, next) = next_node;
-                    @field(next_node, prev) = prev_node;
-                } else {
-                    @field(prev_node, next) = null;
-                }
-            } else if (@field(node, next)) |next_node| {
-                @field(next_node, prev) = null;
-            } else return;
-            @field(node, prev) = null;
-            @field(node, next) = null;
-        }
-
-        /// Unlink from the next structure, if any.  Returns the unlinked
-        /// struct, or null.
-        pub fn unlinkNext(node: *DNode) ?*DNode {
-            const this_next = @field(node, next) orelse return null;
-            @field(this_next, prev) = null;
-            @field(node, next) = null;
-            return this_next;
-        }
-
-        /// Unlink from the previous structure, if any.  Returns the unlinked
-        /// struct, or null.
-        pub fn unlinkPrev(node: *DNode) ?*DNode {
-            const this_prev = @field(node, prev) orelse return null;
-            @field(this_prev, next) = null;
-            @field(node, prev) = null;
-            return this_prev;
-        }
-
-        /// Swaps this node's position with the position of `node.next`.  If
-        /// it is `null`, nothing happens.  This can invalidate the last node
-        /// in a DoublyLinkedList, this condition can be detected (given
-        /// otherwise proper use) if `node.next` is `null` after the call.
-        pub fn swapForward(node: *DNode) void {
-            // ABCD -- ACBD.  node is B
-            const nodeC: *DNode = @field(node, next) orelse return;
-            const nodeA: ?*DNode = @field(node, prev);
-            const nodeD: ?*DNode = @field(nodeC, next);
-
-            // B <-> D
-            if (nodeD) |D| @field(D, prev) = node;
-            @field(node, next) = nodeD;
-
-            // C <-> B
-            @field(node, prev) = nodeC;
-            @field(nodeC, next) = node;
-
-            // A <-> C
-            @field(nodeC, prev) = nodeA;
-            if (nodeA) |A| @field(A, next) = nodeC;
-        }
-
-        /// Swaps this node's position with the position of `node.prev`.  If
-        /// it is `null`, nothing happens.  This can invalidate the first node
-        /// in a DoublyLinkedList, this condition can be detected (given
-        /// otherwise proper use) if `node.prev` is `null` after the call.
-        pub fn swapBackward(node: *DNode) void {
-            // ABCD -- ACBD.  node is C
-            const nodeB: *DNode = @field(node, prev) orelse return;
-            const nodeD: ?*DNode = @field(node, next);
-            const nodeA: ?*DNode = @field(nodeB, prev);
-
-            // A <-> C
-            @field(node, prev) = nodeA;
-            if (nodeA) |A| @field(A, next) = node;
-
-            // C <-> B
-            @field(node, next) = nodeB;
-            @field(nodeB, prev) = node;
-
-            // B <-> D
-            @field(nodeB, next) = nodeD;
-            if (nodeD) |D| @field(D, prev) = nodeB;
-        }
-
-        /// Splices the list in the `next` direction of the receiver.  The list
-        /// is not cleared and will be in an invalid state.  It is checked illegal
-        /// behavior for `list` to be empty.  Prefer to use `spliceForwardOf` on
-        /// the list containing the node.
-        pub fn spliceForward(node: *DNode, list: *DoublyLinkedList) void {
-            const node_next = ThisNode.unlinkNext(node);
-
-            @field(node, next) = list.first;
-            @field(list.first.?, prev) = node;
-
-            @field(list.last.?, next) = node_next;
-            if (node_next) |nn| @field(nn, prev) = list.last;
-        }
-
-        /// Slices the list in the `prev` direction of the receiver.  The list is
-        /// not cleared and will be in an invalid state.  It is checked illegal
-        /// behavior for `list` to be empty.  Prefer to use `spliceBackwardOf` on
-        /// the list containing the node.
-        pub fn spliceBackward(node: *DNode, list: *DoublyLinkedList) void {
-            const node_prev = ThisNode.unlinkPrev(node);
-            @field(node, prev) = list.last;
-            @field(list.last.?, next) = node;
-
-            @field(list.first.?, prev) = node_prev;
-            if (node_prev) |np| @field(np, next) = list.first;
-        }
-
-        /// Answers whether the node is in a well-formed double linked
-        /// list when following the 'next' pointers.  Perhaps surprisingly,
-        /// this answers `true` if `node.next` is `null`.  A `false` answer
-        /// means there's a problem with your list.  This is a diagnostic
-        /// tool.  If `node.prev` is `null`, this will detect a forward half
-        /// cyle as a broken link.
-        pub fn inDoubleLinkedListForward(node: *DNode) bool {
-            var this_node = node;
-            var maybe_next = @field(this_node, next);
-            while (maybe_next) |next_node| {
-                if (@field(next_node, prev) != this_node) return false;
-                this_node = next_node;
-                maybe_next = @field(next_node, next);
-            }
-            return true;
-        }
-
-        /// Answers whether the node is in a well-formed double linked
-        /// list when following the 'prev' pointers.  Perhaps surprisingly,
-        /// this answers `true` if `node.prev` is `null`.  A `false` answer
-        /// means there's a problem with your list.  This is a diagnostic
-        /// tool.  If `node.next` is `null`, this will detect a backward half
-        /// cycle as a broken link.
-        pub fn inDoubleLinkedListBackward(node: *DNode) bool {
-            var this_node = node;
-            var maybe_prev = @field(this_node, prev);
-            while (maybe_prev) |prev_node| {
-                if (@field(prev_node, next) != this_node) return false;
-                this_node = prev_node;
-                maybe_prev = @field(prev_node, prev);
-            }
-            return true;
-        }
-
-        /// Answers whether the node is in a cycle, or whether it enters
-        /// one in the forward direction.  Uses Floyd-Knuth Tortoise and
-        /// Hare Algorithm.  Will detect proper loops, where each double
-        /// link is valid, but does not validate back links.  A diagnostic
-        /// tool, for when your program hangs and you need to know why.
-        pub fn inCycleForward(node: *DNode) bool {
-            var tortoise: *DNode = node;
-            var hare = @field(node, next);
-            while (@field(tortoise, next)) |next_tortoise| {
-                if (hare == null) return false;
-                const hare_next = @field(hare.?, next);
-                if (hare_next == tortoise) return true;
-                if (hare_next) |next_hare| {
-                    hare = @field(next_hare, next);
-                    if (hare) |next_next_hare| {
-                        if (next_next_hare == tortoise) return true;
-                    } else return false;
-                } else {
-                    return false;
-                }
-                tortoise = next_tortoise;
-            }
-            // Node is null forward, that's a false:
-            return false;
-        }
-
-        /// Answers whether the node is in a cycle, or whether it enters
-        /// one in the backward direction.  Uses Floyd-Knuth Tortoise and
-        /// Hare Algorithm.  Will detect proper loops, where each double
-        /// link is valid, but does not validate forward links.  A
-        /// diagnostic tool, for when your program hangs and you need to
-        /// know why.
-        pub fn inCycleBackward(node: *DNode) bool {
-            var tortoise: *DNode = node;
-            var hare = @field(node, prev);
-            while (@field(tortoise, prev)) |prev_tortoise| {
-                if (hare == null) return false;
-                const hare_prev = @field(hare.?, prev);
-                if (hare_prev == tortoise) return true;
-                if (hare_prev) |prev_hare| {
-                    hare = @field(prev_hare, prev);
-                    if (hare) |prev_prev_hare| {
-                        if (prev_prev_hare == tortoise) return true;
-                    } else return false;
-                } else {
-                    return false;
-                }
-                tortoise = prev_tortoise;
-            }
-            // Node is null backward, that's a false:
-            return false;
-        }
-
-        /// Multiple intrusive lists being possible, we always call functions
-        /// from the type, not as members.
-        const ThisNode = @This();
-
-        /// DoublyLinkedList type for provided data structure.  Create with the `.empty`
-        /// declaration literal.
-        pub const DoublyLinkedList = struct {
-            first: ?*DNode,
-            last: ?*DNode,
-
-            pub const empty: DoublyLinkedList = .{ .first = null, .last = null };
-
-            /// Inserts `new_node` after `existing_node`, adjusting `list.last` if needed.
-            pub fn insertAfter(list: *DoublyLinkedList, existing_node: *DNode, new_node: *DNode) void {
-                ThisNode.insertAfter(existing_node, new_node);
-                // If new_node is inserted at the end of the list, its 'next' will be null:
-                if (@field(new_node, next) == null) {
-                    list.last = new_node;
-                }
-            }
-
-            /// Inserts `new_node` before `existing_node`, adjusting `list.first` if needed.
-            pub fn insertBefore(list: *DoublyLinkedList, existing_node: *DNode, new_node: *DNode) void {
-                ThisNode.insertBefore(existing_node, new_node);
-                // If new_node is inserted at the front of the list, its 'prev' will be null:
-                if (@field(new_node, prev) == null) {
-                    list.first = new_node;
-                }
-            }
-
-            /// Concatenate list2 onto the end of list1, removing all entries from the former.
-            ///
-            /// Arguments:
-            ///     list1: the list to concatenate onto
-            ///     list2: the list to be concatenated
-            pub fn concatByMoving(list1: *DoublyLinkedList, list2: *DoublyLinkedList) void {
-                const l2_first = list2.first orelse return;
-                if (list1.last) |l1_last| {
-                    @field(l1_last, next) = list2.first;
-                    @field(l2_first, prev) = list1.last;
-                } else {
-                    // list1 was empty
-                    list1.first = list2.first;
-                }
-                list1.last = list2.last;
-                list2.first = null;
-                list2.last = null;
-            }
-
-            /// Extract the range from `from` to `to` as a new linked list, healing the gap in the list
-            /// thereby created.  Assumes that `from` and `to` are valid members of `list`, and that `to`
-            /// may be found in the `next` direction starting from `from`.  No `prev` equivalent is provided,
-            /// simply switch `from` and `to`.  It is valid for `from` to be `list.first`, or for `to` to be
-            /// `list.last`; `from` and `to` may not be identical.
-            pub fn extractRange(list: *DoublyLinkedList, from: *DNode, to: *DNode) DoublyLinkedList {
-                const from_prev = ThisNode.unlinkPrev(from);
-                const to_next = ThisNode.unlinkNext(to);
-                if (from_prev) |now_prev| {
-                    if (to_next) |now_next| {
-                        // These were both middle nodes
-                        @field(now_prev, next) = now_next;
-                        @field(now_next, prev) = now_prev;
-                    } else {
-                        // `to` is assumed to be the last node,
-                        // so now, now_prev is the last
-                        list.last = now_prev;
-                    }
-                } else {
-                    // `from` was the first.  We need to know if
-                    // `to` was the last so we can make the list empty.
-                    if (to_next) |now_next| {
-                        // It was not:
-                        list.first = now_next;
-                    } else {
-                        // It was:
-                        list.first = null;
-                        list.last = null;
-                    }
-                }
-                return .{ .first = from, .last = to };
-            }
-
-            /// Splices `list2` `next` to the parameter `node`.  When this function returns, `list2`
-            /// will be empty.  This is valid to call when `node` is either the first or the last node
-            /// on the receiver list, but if this is known to be the case, prefer `concatByMoving`.  It is
-            /// assumed that `list` has contents (at least `node`), and checked illegal behavior if `list2`
-            /// does not.
-            pub fn spliceForwardOf(list: *DoublyLinkedList, node: *DNode, list2: *DoublyLinkedList) void {
-                ThisNode.spliceForward(node, list2);
-                if (list.last == node) {
-                    list.last = list2.last;
-                }
-                list2.first = null;
-                list2.last = null;
-            }
-
-            /// Splices `list2` `prev` to the parameter `node`.  When this function returns, `list2`
-            /// will be empty.  This is valid to call when `node` is either the first or the last node
-            /// on the receiver list, but if this is known to be the case, prefer `concatByMoving`.  It is
-            /// assumed that `list` has contents (at least `node`), and checked illegal behavior if `list2`
-            /// does not.
-            pub fn spliceBackwardOf(list: *DoublyLinkedList, node: *DNode, list2: *DoublyLinkedList) void {
-                ThisNode.spliceBackward(node, list2);
-                if (list.first == node) {
-                    list.first = list2.first;
-                }
-                list2.first = null;
-                list2.last = null;
-            }
-
-            /// Insert a new node at the end of the list.
-            ///
-            /// Arguments:
-            ///     new_node: Pointer to the new node to insert.
-            pub fn append(list: *DoublyLinkedList, new_node: *DNode) void {
-                if (list.last) |last| {
-                    // Insert after last.
-                    list.insertAfter(last, new_node);
-                } else {
-                    // Empty list.
-                    list.prepend(new_node);
-                }
-            }
-
-            /// Insert a new node at the beginning of the list.
-            ///
-            /// Arguments:
-            ///     new_node: Pointer to the new node to insert.
-            pub fn prepend(list: *DoublyLinkedList, new_node: *DNode) void {
-                if (list.first) |first| {
-                    // Insert before first.
-                    list.insertBefore(first, new_node);
-                } else {
-                    // Empty list.
-                    list.first = new_node;
-                    list.last = new_node;
-                    @field(new_node, prev) = null;
-                    @field(new_node, next) = null;
-                }
-            }
-
-            /// Remove a node from the list.  Assumes this node belongs to
-            /// this list.
-            ///
-            /// Arguments:
-            ///     node: Pointer to the node to be removed.
-            pub fn remove(list: *DoublyLinkedList, node: *DNode) void {
-                switch (ThisNode.positionInList(node)) {
-                    .first => {
-                        list.first = ThisNode.unlinkNext(node);
-                    },
-                    .last => {
-                        list.last = ThisNode.unlinkPrev(node);
-                    },
-                    .middle => ThisNode.removeSelfFromList(node),
-                    .solo => {},
-                }
-            }
-
-            /// Remove and return the last node in the list.
-            ///
-            /// Returns:
-            ///     A pointer to the last node in the list.
-            pub fn pop(list: *DoublyLinkedList) ?*DNode {
-                const last = list.last orelse return null;
-                list.remove(last);
-                return last;
-            }
-
-            /// Remove and return the first node in the list.
-            ///
-            /// Returns:
-            ///     A pointer to the first node in the list.
-            pub fn popFirst(list: *DoublyLinkedList) ?*DNode {
-                const first = list.first orelse return null;
-                list.remove(first);
-                return first;
-            }
-
-            /// Iterate over all nodes, returning the count.
-            ///
-            /// This operation is O(N). Consider tracking the length separately rather than
-            /// computing it.
-            pub fn len(list: DoublyLinkedList) usize {
-                var count: usize = 0;
-                var it: ?*const DNode = list.first;
-                while (it) |n| : (it = @field(n, next)) count += 1;
-                return count;
-            }
-
-            /// Answers whether the list is empty.
-            pub inline fn isEmpty(list: DoublyLinkedList) bool {
-                return list.first == null and list.last == null;
-            }
-        };
-    };
-}
-
-// Satisfy ourselves that the type fulfills the necessary contract for the field.
-fn verifyFieldType(T: type, comptime field_name: []const u8) void {
-    if (!@hasField(T, field_name)) {
-        @compileError("The field name provided is not valid for the type");
-    }
-    const f_info = @typeInfo(@FieldType(T, field_name));
-    switch (f_info) {
-        .optional => |o| {
-            const c_info = @typeInfo(o.child);
-            switch (c_info) {
-                .pointer => |p| {
-                    if (p.child != T) {
-                        @compileError("Optional pointer field does not point to the type");
-                    }
-                    if (p.is_const) {
-                        @compileError("The pointer field's type is const");
-                    }
-                },
-                else => @compileError("Optional field type is not a pointer"),
-            }
-        },
-        else => @compileError("Field type is not optional (?)"),
-    }
 }
 
 // Tests
@@ -1530,19 +1053,13 @@ test "A Link Between Worlds" {
         data: u32,
         forward: ?*@This() = null,
         backward: ?*@This() = null,
+        link: Link = .{},
 
-        pub const linkedIn = aLinkBetweenWorldsOld(@This(), "forward", .backward);
+        pub const Link = aLinkBetweenWorlds(@This());
 
-        pub const DoublyLinkedList = linkedIn.DoublyLinkedList;
-        pub const insertBefore = linkedIn.insertBefore;
-        pub const insertAfter = linkedIn.insertAfter;
-        pub const swapForward = linkedIn.swapForward;
-        pub const swapBackward = linkedIn.swapBackward;
-        pub const inDoubleLinkedListForward = linkedIn.inDoubleLinkedListForward;
-        pub const inDoubleLinkedListBackward = linkedIn.inDoubleLinkedListBackward;
-        pub const inCycleForward = linkedIn.inCycleForward;
-        pub const inCycleBackward = linkedIn.inCycleBackward;
+        pub const DoublyLinkedList = Link.DoublyLinkedList;
     };
+
     var list: L.DoublyLinkedList = .empty;
 
     var one: L = .{ .data = 1 };
@@ -1560,39 +1077,39 @@ test "A Link Between Worlds" {
     try testing.expect(list.first != null);
     try testing.expect(list.last != null);
 
-    try testing.expect(one.inDoubleLinkedListForward());
-    try testing.expect(five.inDoubleLinkedListBackward());
+    try testing.expect(one.link.inDoubleLinkedListForward());
+    try testing.expect(five.link.inDoubleLinkedListBackward());
 
     // Swap
 
     try testing.expectEqual(2, three.backward.?.data);
 
-    three.swapForward();
+    three.link.swapForward();
     try testing.expectEqual(4, three.backward.?.data);
     try testing.expectEqual(5, three.forward.?.data);
-    try testing.expect(one.inDoubleLinkedListForward());
-    try testing.expect(five.inDoubleLinkedListBackward());
+    try testing.expect(one.link.inDoubleLinkedListForward());
+    try testing.expect(five.link.inDoubleLinkedListBackward());
 
-    three.swapBackward();
+    three.link.swapBackward();
     try testing.expectEqual(4, three.forward.?.data);
     try testing.expectEqual(2, three.backward.?.data);
-    try testing.expect(one.inDoubleLinkedListForward());
-    try testing.expect(five.inDoubleLinkedListBackward());
+    try testing.expect(one.link.inDoubleLinkedListForward());
+    try testing.expect(five.link.inDoubleLinkedListBackward());
 
-    four.swapForward();
+    four.link.swapForward();
     try testing.expectEqual(5, three.forward.?.data);
     try testing.expectEqual(null, four.forward);
-    try testing.expect(one.inDoubleLinkedListForward());
-    try testing.expect(five.inDoubleLinkedListBackward());
+    try testing.expect(one.link.inDoubleLinkedListForward());
+    try testing.expect(five.link.inDoubleLinkedListBackward());
 
-    four.swapBackward();
+    four.link.swapBackward();
     try testing.expectEqual(5, four.forward.?.data);
     try testing.expectEqual(null, five.forward);
-    try testing.expect(one.inDoubleLinkedListForward());
-    try testing.expect(five.inDoubleLinkedListBackward());
+    try testing.expect(one.link.inDoubleLinkedListForward());
+    try testing.expect(five.link.inDoubleLinkedListBackward());
 
-    try testing.expect(!one.inCycleForward());
-    try testing.expect(!five.inCycleBackward());
+    try testing.expect(!one.link.inCycleForward());
+    try testing.expect(!five.link.inCycleBackward());
 
     // Traverse forwards.
     {
@@ -1635,17 +1152,10 @@ test "concatenation and splicing" {
         data: u32,
         next: ?*@This() = null,
         prev: ?*@This() = null,
+        link: Link = .{},
 
-        pub const linkedIn = aLinkBetweenWorldsOld(@This(), .next, "prev");
-        pub const DoublyLinkedList = linkedIn.DoublyLinkedList;
-        pub const insertBefore = linkedIn.insertBefore;
-        pub const insertAfter = linkedIn.insertAfter;
-        pub const swapForward = linkedIn.swapForward;
-        pub const swapBackward = linkedIn.swapBackward;
-        pub const inDoubleLinkedListForward = linkedIn.inDoubleLinkedListForward;
-        pub const inDoubleLinkedListBackward = linkedIn.inDoubleLinkedListBackward;
-        pub const inCycleForward = linkedIn.inCycleForward;
-        pub const inCycleBackward = linkedIn.inCycleBackward;
+        pub const Link = doublyLinkedList(@This(), .next, "prev", null);
+        pub const DoublyLinkedList = Link.DoublyLinkedList;
     };
 
     var list1: L.DoublyLinkedList = .empty;
@@ -1779,34 +1289,26 @@ test "cycles" {
     const Kid = struct {
         next: ?*@This() = null,
         prev: ?*@This() = null,
+        the_link: Link = .{},
 
-        pub const linkedIn = doublyLinkedListOld(@This(), .next, .prev);
-
-        pub const DoublyLinkedList = linkedIn.DoublyLinkedList;
-        pub const insertBefore = linkedIn.insertBefore;
-        pub const insertAfter = linkedIn.insertAfter;
-        pub const swapForward = linkedIn.swapForward;
-        pub const swapBackward = linkedIn.swapBackward;
-        pub const inDoubleLinkedListForward = linkedIn.inDoubleLinkedListForward;
-        pub const inDoubleLinkedListBackward = linkedIn.inDoubleLinkedListBackward;
-        pub const inCycleForward = linkedIn.inCycleForward;
-        pub const inCycleBackward = linkedIn.inCycleBackward;
+        pub const Link = doublyLinkedList(@This(), .next, .prev, null);
+        pub const DoublyLinkedList = Link.DoublyLinkedList;
     };
 
     var alice: Kid = .{};
     var bob: Kid = .{};
     var charlie: Kid = .{};
     var dan: Kid = .{};
-    alice.insertAfter(&bob);
+    alice.the_link.insertAfter(&bob);
     try testing.expectEqual(&bob, alice.next.?);
     try testing.expectEqual(null, alice.prev);
 
-    bob.insertAfter(&charlie);
+    bob.the_link.insertAfter(&charlie);
     try testing.expectEqual(&charlie, bob.next.?);
     try testing.expectEqual(null, alice.prev);
     try testing.expectEqual(&bob, alice.next.?);
 
-    charlie.insertAfter(&alice);
+    charlie.the_link.insertAfter(&alice);
     try testing.expectEqual(&alice, charlie.next.?);
     try testing.expectEqual(&bob, charlie.prev.?);
     try testing.expectEqual(&charlie, alice.prev.?);
@@ -1815,30 +1317,30 @@ test "cycles" {
     try testing.expectEqual(&charlie, bob.next.?);
     try testing.expectEqual(&alice, charlie.next.?);
 
-    try testing.expect(charlie.inCycleBackward());
-    try testing.expect(charlie.inCycleForward());
-    try testing.expect(alice.inCycleBackward());
-    try testing.expect(alice.inCycleForward());
-    try testing.expect(bob.inCycleBackward());
-    try testing.expect(bob.inCycleForward());
+    try testing.expect(charlie.the_link.inCycleBackward());
+    try testing.expect(charlie.the_link.inCycleForward());
+    try testing.expect(alice.the_link.inCycleBackward());
+    try testing.expect(alice.the_link.inCycleForward());
+    try testing.expect(bob.the_link.inCycleBackward());
+    try testing.expect(bob.the_link.inCycleForward());
 
     dan.next = &bob;
-    try testing.expect(dan.inCycleForward());
-    try testing.expect(!dan.inCycleBackward());
+    try testing.expect(dan.the_link.inCycleForward());
+    try testing.expect(!dan.the_link.inCycleBackward());
 
     var ethel: Kid = .{};
     var frank: Kid = .{};
     var glen: Kid = .{};
-    glen.insertBefore(&frank);
-    frank.insertBefore(&ethel);
-    ethel.insertBefore(&glen);
+    glen.the_link.insertBefore(&frank);
+    frank.the_link.insertBefore(&ethel);
+    ethel.the_link.insertBefore(&glen);
 
-    try testing.expect(ethel.inCycleBackward());
-    try testing.expect(ethel.inCycleForward());
-    try testing.expect(frank.inCycleBackward());
-    try testing.expect(frank.inCycleForward());
-    try testing.expect(glen.inCycleBackward());
-    try testing.expect(glen.inCycleForward());
+    try testing.expect(ethel.the_link.inCycleBackward());
+    try testing.expect(ethel.the_link.inCycleForward());
+    try testing.expect(frank.the_link.inCycleBackward());
+    try testing.expect(frank.the_link.inCycleForward());
+    try testing.expect(glen.the_link.inCycleBackward());
+    try testing.expect(glen.the_link.inCycleForward());
 }
 
 const std = @import("std");
