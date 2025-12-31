@@ -154,7 +154,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             );
         };
 
-        const has_order = if (m_orderFn) |_| true else if (!info_has_orderFn) @hasDecl(Node, "zeldaOrderFn") else false;
+        pub const has_order = if (m_orderFn) |_| true else if (!info_has_orderFn) @hasDecl(Node, "zeldaOrderFn") else false;
         const order_name = if (m_orderFn) |orderFn| orderFn else if (has_order) "zeldaOrderFn" else "";
 
         inline fn base(link: *Link) *Node {
@@ -248,6 +248,131 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             const node = base(link);
             const last = link.findLast();
             return .{ .first = node, .last = last };
+        }
+
+        //| Ordered List Library
+        //|
+        //| Ideally these would only exist in the namespace if an order function
+        //| were provided.  I tried making them `void` unless there's an order
+        //| function, but ZLS can't see through that kind of complex comptime
+        //| wizardry, which is understandable if a little sad.
+        //|
+        //| So everyone is going to see these, but it will be a compile error to
+        //| call them unless they can do something.  This will do for now.
+
+        /// Sort a list after this node in ascending order,
+        /// returning the smallest value.
+        pub fn sortAscending(link: *Link) *Node {
+            orderGuard();
+            const node = base(link);
+            return mergeSortFn(lessThan)(node);
+        }
+
+        /// Sort a list after this node in descending order,
+        /// returning the largest value.
+        pub fn sortDescending(link: *Link) *Node {
+            orderGuard();
+            const node = base(link);
+            return mergeSortFn(greaterThan)(node);
+        }
+
+        inline fn orderGuard() void {
+            if (!has_order)
+                @compileError(
+                    \\This mixin was not configured with an order function, and
+                    \\cannot be sorted without one.  Zelda will find a public
+                    \\declaration `zeldaOrderFn`, expecting the signature
+                    \\
+                    \\    fn(*const Node, *const Node) callconv(.@"inline") zelda.Order;
+                    \\
+                    \\Although the calling convention and specific enum are never checked, this
+                    \\will allow the optimizer to generate the best code in the most cases.
+                    \\
+                    \\When configuring the mixin manually, provide the name of the declaration as
+                    \\a string for the last argument, rather than `null`.
+                    \\
+                );
+        }
+
+        inline fn lessThan(n1: *const Node, n2: *const Node) bool {
+            orderGuard();
+            return @field(Node, order_name)(n1, n2) == .lt;
+        }
+
+        inline fn greaterThan(n1: *const Node, n2: *const Node) bool {
+            orderGuard();
+            return @field(Node, order_name)(n1, n2) == .gt;
+        }
+
+        const LISTSIZE = 32;
+
+        fn mergeSortFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node) *Node {
+            return struct {
+                pub fn msort(n: *Node) *Node {
+                    var ep: ?*Node = null;
+                    var set: [LISTSIZE]?*Node = .{null} ** LISTSIZE;
+                    var m_list: ?*Node = n;
+                    // TODO: Galloping pass
+                    while (m_list) |list| {
+                        ep = list;
+                        m_list = @field(list, next);
+                        @field(ep.?, next) = null;
+                        var i: usize = 0;
+                        while (i < LISTSIZE - 1 and set[i] != null) : (i += 1) {
+                            ep = merge(set[i], ep);
+                            set[i] = null;
+                        }
+                        set[i] = merge(set[i], ep);
+                    }
+                    ep = null;
+                    for (0..LISTSIZE) |i| {
+                        if (set[i]) |tail| {
+                            ep = merge(tail, ep);
+                        }
+                    }
+                    return ep.?;
+                }
+
+                // Merge two linked lists, given the head. Either the first or the
+                // second may be null: by construction, they will never both be
+                // null, but it's harmless to our purposes to return a `?*T`, so
+                // we wouldn't benefit from that fact and don't take advantage of it.
+                fn merge(maybe_a: ?*Node, maybe_b: ?*Node) ?*Node {
+                    if (maybe_a == null) return maybe_b;
+                    if (maybe_b == null) return maybe_a;
+                    var a: ?*Node = maybe_a;
+                    var b: ?*Node = maybe_b;
+                    const head: *Node = if (orderFn(a.?, b.?)) head: {
+                        const h = a.?;
+                        a = @field(h, next);
+                        break :head h;
+                    } else head: {
+                        const h = b.?;
+                        b = @field(h, next);
+                        break :head h;
+                    };
+                    var ptr: *Node = head;
+                    while (a != null and b != null) {
+                        const a_ptr = a.?;
+                        const b_ptr = b.?;
+                        if (orderFn(a_ptr, b_ptr)) {
+                            @field(ptr, next) = a_ptr;
+                            ptr = a_ptr;
+                            a = @field(a_ptr, next);
+                        } else {
+                            @field(ptr, next) = b_ptr;
+                            ptr = b_ptr;
+                            b = @field(b_ptr, next);
+                        }
+                    }
+                    if (a) |a_ptr| {
+                        @field(ptr, next) = a_ptr;
+                    } else {
+                        @field(ptr, next) = b;
+                    }
+                    return head;
+                }
+            }.msort;
         }
 
         //| Singly Linked List container type
@@ -1050,6 +1175,41 @@ test "A Link to the Past" {
     try testing.expect(list.first.?.data == 4);
     try testing.expect(list.first.?.node.?.data == 2);
     try testing.expect(list.first.?.node.?.node == null);
+}
+
+test "Sorted singly-linked list" {
+    const Sorted = struct {
+        val: u32,
+        next_val: ?*S = null,
+        mixer: Link = .{},
+
+        pub const empty: S = .{ .val = undefined };
+
+        pub const S = @This();
+        pub const Link = aLinkToThePast(S);
+
+        pub inline fn zeldaOrderFn(a: *const S, b: *const S) Order {
+            const sign: i64 = @as(i64, a.val) - @as(i64, b.val);
+            if (sign < 0)
+                return .lt
+            else if (sign == 0)
+                return .eq
+            else
+                return .gt;
+        }
+    };
+    try testing.expect(Sorted.Link.has_order);
+    var sorts: [6]Sorted = .{Sorted.empty} ** 6;
+    for (0..6) |i| {
+        sorts[i].val = @intCast(12 - i);
+    }
+    for (0..5) |i| {
+        sorts[i].next_val = &sorts[i + 1];
+    }
+    const sorted = sorts[0].mixer.sortAscending();
+    try expectEqual(sorted, &sorts[5]);
+    const downsorted = sorted.mixer.sortDescending();
+    try expectEqual(downsorted, &sorts[0]);
 }
 
 test "A Link Between Worlds" {
