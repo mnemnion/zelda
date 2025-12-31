@@ -120,7 +120,7 @@ pub fn singlyLinkedList(Node: type, comptime next_name: anytype, comptime m_orde
 /// https://github.com/ziglang/zig/issues/24636
 fn singlyLinkedListInner(Node: type, info: anytype) type {
     const info_has_orderFn = @hasField(@TypeOf(info), "orderFn");
-    const m_next: ?[]const u8 = if (@hasField(@TypeOf(info), "next")) info.next else null;
+    const maybe_next: ?[]const u8 = if (@hasField(@TypeOf(info), "next")) info.next else null;
     const m_orderFn: ?[]const u8 = if (info_has_orderFn) info.orderFn else null;
 
     return struct { // Sema entering this definition resolves Link:
@@ -141,7 +141,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             );
         };
 
-        const next = m_next orelse next_name: {
+        const next = maybe_next orelse next_name: {
             const t_fields = @typeInfo(Node).@"struct".fields;
             for (t_fields) |field| {
                 if (field.type == ?*Node) {
@@ -276,6 +276,44 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             return mergeSortFn(greaterThan)(node);
         }
 
+        /// Insert the argument node into the list, such that if already ordered
+        /// ascending, the returned list will remain in ascending order.
+        /// Strictly, it will be before the first node it sees which is equal to
+        /// or greater than its value.
+        pub fn insertOrderedAscending(link: *Link, node: *Node) *Node {
+            orderGuard();
+            const head = base(link);
+            return insertSortFn(lessThanEq)(head, node);
+        }
+
+        /// Answer whether the node is the head of a list in ascending order.
+        /// A useful diagnostic, assertion, and testing tool, but something
+        /// production code should prefer to know by construction.
+        pub fn isOrderedAscending(link: *Link) bool {
+            orderGuard();
+            const head = base(link);
+            return inOrderFn(lessThanEq)(head);
+        }
+
+        /// Answer whether the node is the head of a list in descending order.
+        /// A useful diagnostic, assertion, and testing tool, but something
+        /// production code should prefer to know by construction.
+        pub fn isOrderedDescending(link: *Link) bool {
+            orderGuard();
+            const head = base(link);
+            return inOrderFn(greaterThanEq)(head);
+        }
+
+        /// Insert the argument node into the list, such that if already ordered
+        /// descending, the returned list will remain in descending order.
+        /// Strictly, it will be before the first node it sees which is equal to
+        /// or less than its value.
+        pub fn insertOrderedDescending(link: *Link, node: *Node) *Node {
+            orderGuard();
+            const head = base(link);
+            return insertSortFn(greaterThanEq)(head, node);
+        }
+
         inline fn orderGuard() void {
             if (!has_order)
                 @compileError(
@@ -290,18 +328,64 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                     \\
                     \\When configuring the mixin manually, provide the name of the declaration as
                     \\a string for the last argument, rather than `null`.
-                    \\
                 );
         }
 
         inline fn lessThan(n1: *const Node, n2: *const Node) bool {
-            orderGuard();
             return @field(Node, order_name)(n1, n2) == .lt;
         }
 
+        inline fn lessThanEq(n1: *const Node, n2: *const Node) bool {
+            return @field(Node, order_name)(n1, n2) != .gt;
+        }
+
         inline fn greaterThan(n1: *const Node, n2: *const Node) bool {
-            orderGuard();
             return @field(Node, order_name)(n1, n2) == .gt;
+        }
+
+        inline fn greaterThanEq(n1: *const Node, n2: *const Node) bool {
+            return @field(Node, order_name)(n1, n2) != .lt;
+        }
+
+        fn insertSortFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node, *Node) *Node {
+            return struct {
+                pub fn insert(head: *Node, node: *Node) *Node {
+                    if (orderFn(node, head)) {
+                        @field(node, next) = head;
+                        return node;
+                    }
+                    var m_next = @field(head, next);
+                    var last = head;
+                    while (m_next) |next_node| {
+                        if (orderFn(node, next_node)) {
+                            @field(last, next) = node;
+                            @field(node, next) = next_node;
+                            return head;
+                        }
+                        last = next_node;
+                        m_next = @field(next_node, next);
+                    }
+                    @field(last, next) = node;
+                    return head;
+                }
+            }.insert;
+        }
+
+        fn inOrderFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node) bool {
+            return struct {
+                pub fn inorder(head: *Node) bool {
+                    var this: *Node = head;
+                    while (@field(this, next)) |next_node| {
+                        if (orderFn(this, next_node)) {
+                            this = next_node;
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        return true;
+                    }
+                }
+            }.inorder;
         }
 
         const LISTSIZE = 32;
@@ -1199,6 +1283,7 @@ test "Sorted singly-linked list" {
         }
     };
     try testing.expect(Sorted.Link.has_order);
+    //| Merge sorts
     var sorts: [6]Sorted = .{Sorted.empty} ** 6;
     for (0..6) |i| {
         sorts[i].val = @intCast(12 - i);
@@ -1206,10 +1291,44 @@ test "Sorted singly-linked list" {
     for (0..5) |i| {
         sorts[i].next_val = &sorts[i + 1];
     }
-    const sorted = sorts[0].mixer.sortAscending();
-    try expectEqual(sorted, &sorts[5]);
-    const downsorted = sorted.mixer.sortDescending();
-    try expectEqual(downsorted, &sorts[0]);
+    {
+        const sorted = sorts[0].mixer.sortAscending();
+        try expectEqual(sorted, &sorts[5]);
+        const downsorted = sorted.mixer.sortDescending();
+        try expectEqual(downsorted, &sorts[0]);
+    }
+    for (0..5) |i| {
+        try expectEqual(sorts[i].next_val, &sorts[i + 1]);
+    }
+    //| Sorted insertion
+    for (0..6) |i| {
+        sorts[i].val = @intCast((i + 1) * 2);
+        if (i < 5) {
+            try expectEqual(sorts[i].next_val, &sorts[i + 1]);
+        }
+    }
+    try expectEqual(6, sorts[0].mixer.countChildren() + 1);
+    var one: Sorted = .{ .val = 1 };
+    {
+        const sorted = sorts[0].mixer.insertOrderedAscending(&one);
+        try expectEqual(7, sorted.mixer.countChildren() + 1);
+        try expectEqual(sorted, &one);
+    }
+    var three: Sorted = .{ .val = 3 };
+    {
+        const sorted = one.mixer.insertOrderedAscending(&three);
+        try expectEqual(8, sorted.mixer.countChildren() + 1);
+        try expect(sorted.mixer.isOrderedAscending());
+    }
+    var five: Sorted = .{ .val = 5 };
+    {
+        const rsorted = one.mixer.sortDescending();
+        try expect(rsorted.mixer.isOrderedDescending());
+        const still_rsorted = rsorted.mixer.insertOrderedDescending(&five);
+        try expectEqual(9, rsorted.mixer.countChildren() + 1);
+        try expectEqual(rsorted, still_rsorted);
+        try expect(still_rsorted.mixer.isOrderedDescending());
+    }
 }
 
 test "A Link Between Worlds" {
@@ -1509,3 +1628,4 @@ test "cycles" {
 
 const std = @import("std");
 const assert = std.debug.assert;
+const expect = std.testing.expect;
