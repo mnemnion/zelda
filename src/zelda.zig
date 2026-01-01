@@ -157,6 +157,13 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         pub const has_order = if (m_orderFn) |_| true else if (!info_has_orderFn) @hasDecl(Node, "zeldaOrderFn") else false;
         const order_name = if (m_orderFn) |orderFn| orderFn else if (has_order) "zeldaOrderFn" else "";
 
+        pub const has_limit = @hasDecl(Node, "zelda_seek_limit") or @hasDecl(Node, "ZELDA_SEEK_LIMIT");
+        pub const seek_limit = if (!has_limit) {} //
+            else if (@hasDecl(Node, "ZELDA_SEEK_LIMIT"))
+                Node.ZELDA_SEEK_LIMIT
+            else
+                Node.zelda_seek_limit;
+
         inline fn base(link: *Link) *Node {
             return @alignCast(@fieldParentPtr(link_field, link));
         }
@@ -212,10 +219,11 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         /// node is found.  O(n).  Prefer keeping a `List`.
         pub fn findLast(link: *Link) *Node {
             var it = base(link);
-            var hmm: usize = 0;
+            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
             while (true) {
-                hmm += 1;
+                if (has_limit) limit += 1;
                 it = @field(it, next) orelse return it;
+                if (has_limit) if (limit >= seek_limit) @panic("findLast exceeded seek limit");
             }
         }
 
@@ -227,8 +235,11 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             const node: *const Node = cbase(link);
             var count: usize = 0;
             var it: ?*const Node = @field(node, next);
+            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
             while (it) |n| : (it = @field(n, next)) {
+                if (has_limit) limit += 1;
                 count += 1;
+                if (has_limit) if (limit >= seek_limit) @panic("countChildren exceeded seek limit");
             }
             return count;
         }
@@ -261,8 +272,11 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         /// not by value.
         pub fn belongsTo(link: *const Link, n2: *const Node) bool {
             var m_node: ?*const Node = cbase(link);
+            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
             while (m_node) |node| : (m_node = @field(node, next)) {
+                if (has_limit) limit += 1;
                 if (node == n2) return true;
+                if (has_limit) if (limit >= seek_limit) @panic("belongsTo exceeded seek limit");
             } else return false;
         }
 
@@ -396,7 +410,9 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                     }
                     var m_next = @field(head, next);
                     var last = head;
+                    var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
                     while (m_next) |next_node| {
+                        if (has_limit) limit += 1;
                         if (orderFn(node, next_node)) {
                             @field(last, next) = node;
                             @field(node, next) = next_node;
@@ -404,6 +420,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                         }
                         last = next_node;
                         m_next = @field(next_node, next);
+                        if (has_limit) if (limit >= seek_limit) @panic("insertSorted exceeded seek limit");
                     }
                     @field(last, next) = node;
                     return head;
@@ -416,12 +433,15 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                 pub fn inorder(head: *Node) bool {
                     orderGuard();
                     var this: *Node = head;
+                    var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
                     while (@field(this, next)) |next_node| {
+                        if (has_limit) limit += 1;
                         if (orderFn(this, next_node)) {
                             this = next_node;
                         } else {
                             return false;
                         }
+                        if (has_limit) if (limit >= seek_limit) @panic("inOrder exceeded seek limit");
                     } else {
                         return true;
                     }
@@ -445,7 +465,9 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                         // this brings the merge down to O(n) for an already-
                         // sorted list.
                         var m_gallop: ?*Node = list;
+                        var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
                         while (m_gallop) |gallop| {
+                            if (has_limit) limit += 1;
                             if (@field(gallop, next)) |g_next| {
                                 if (orderFn(gallop, g_next)) {
                                     m_gallop = g_next;
@@ -462,6 +484,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                                 m_list = null;
                                 break;
                             }
+                            if (has_limit) if (limit >= seek_limit) @panic("merge exceeded seek limit");
                         }
                         first = false;
                         var i: usize = 0;
@@ -528,10 +551,13 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                 return;
             }
             var current: *Node = indirect.*.?;
+            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
             while (@field(current, next)) |the_next| {
+                if (has_limit) limit += 1;
                 @field(current, next) = @field(the_next, next);
                 @field(the_next, next) = indirect.*;
                 indirect.* = the_next;
+                if (has_limit) if (limit >= seek_limit) @panic("findLast exceeded seek limit");
             }
         }
 
@@ -1548,6 +1574,8 @@ const Sorted = struct {
     mixer: Link = .{},
 
     pub const empty: S = .{ .val = undefined };
+
+    pub const ZELDA_SEEK_LIMIT = 512;
 
     pub const S = @This();
     pub const Link = aLinkToThePast(S);
