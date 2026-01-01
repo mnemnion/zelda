@@ -229,16 +229,18 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             return count;
         }
 
+        /// Answer the number of elements in the list in total, by iteration, in
+        /// O(n).
+        pub fn len(link: *const Link) usize {
+            return 1 + link.countChildren();
+        }
+
         /// Reverse the list starting from this node, returning the new head.  O(n).
         pub fn reverse(link: *Link) *Node {
-            var current = base(link);
-            const indirect = &current;
-            while (@field(current, next)) |the_next| {
-                @field(current, next) = @field(the_next, next);
-                @field(the_next, next) = indirect.*;
-                indirect.* = the_next;
-            }
-            return indirect.*;
+            var m_current: ?*Node = base(link);
+            const indirect: *?*Node = &m_current;
+            reverseNode(indirect);
+            return indirect.*.?;
         }
 
         /// Return the linked list to which this node belongs, in O(n).  It is
@@ -260,37 +262,71 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         //| So everyone is going to see these, but it will be a compile error to
         //| call them unless they can do something.  This will do for now.
 
-        /// Sort a list after this node in ascending order,
-        /// returning the smallest value.
+        /// Sort a list after this node in ascending order, returning the
+        /// smallest value.  This is a merge sort, taking constant space, and
+        /// O(n log n) worst-case time.
         pub fn sortAscending(link: *Link) *Node {
-            orderGuard();
             const node = base(link);
             return mergeSortFn(lessThan)(node);
         }
 
-        /// Sort a list after this node in descending order,
-        /// returning the largest value.
+        /// Sort a list after this node in descending order, returning the
+        /// largest value.  This is a merge sort, taking constant space, and
+        /// O(n log n) worst-case time.
         pub fn sortDescending(link: *Link) *Node {
-            orderGuard();
             const node = base(link);
             return mergeSortFn(greaterThan)(node);
+        }
+
+        /// If a sorted list is desired, it is inexpensive to capture the tailmost
+        /// node as part of that process.  This function sorts the list after this
+        /// node in ascending order, returning it as a `List`.
+        pub fn toSortedListAscending(link: *Link) List {
+            const node = base(link);
+            // We're breaking the rules here: a list should never have one node
+            // populated unless the other is.  But `sortAscending` doesn't check,
+            // or make assumptions based on the invariant, so we get away with it.
+            var the_list: List = .{ .first = node, .last = null };
+            the_list.sortAscending();
+            return the_list;
+        }
+
+        /// If a sorted list is desired, it is inexpensive to capture the tailmost
+        /// node as part of that process.  This function sorts the list after this
+        /// node in descending order, returning it as a `List`.
+        pub fn toSortedListDescending(link: *Link) List {
+            const node = base(link);
+            var the_list: List = .{ .first = node, .last = null };
+            the_list.sortDescending();
+            return the_list;
         }
 
         /// Insert the argument node into the list, such that if already ordered
         /// ascending, the returned list will remain in ascending order.
         /// Strictly, it will be before the first node it sees which is equal to
-        /// or greater than its value.
+        /// or greater than its value.  When list-building, it is often better
+        /// to collect values and then call `sortAscending`, rather than use
+        /// this to sort as you go.
         pub fn insertOrderedAscending(link: *Link, node: *Node) *Node {
-            orderGuard();
             const head = base(link);
             return insertSortFn(lessThanEq)(head, node);
+        }
+
+        /// Insert the argument node into the list, such that if already ordered
+        /// descending, the returned list will remain in descending order.
+        /// Strictly, it will be before the first node it sees which is equal to
+        /// or less than its value.  When list-building, it is often better to
+        /// collect values and then call `sortDescending`, rather than use this
+        /// to sort as you go.
+        pub fn insertOrderedDescending(link: *Link, node: *Node) *Node {
+            const head = base(link);
+            return insertSortFn(greaterThanEq)(head, node);
         }
 
         /// Answer whether the node is the head of a list in ascending order.
         /// A useful diagnostic, assertion, and testing tool, but something
         /// production code should prefer to know by construction.
         pub fn isOrderedAscending(link: *Link) bool {
-            orderGuard();
             const head = base(link);
             return inOrderFn(lessThanEq)(head);
         }
@@ -299,19 +335,8 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         /// A useful diagnostic, assertion, and testing tool, but something
         /// production code should prefer to know by construction.
         pub fn isOrderedDescending(link: *Link) bool {
-            orderGuard();
             const head = base(link);
             return inOrderFn(greaterThanEq)(head);
-        }
-
-        /// Insert the argument node into the list, such that if already ordered
-        /// descending, the returned list will remain in descending order.
-        /// Strictly, it will be before the first node it sees which is equal to
-        /// or less than its value.
-        pub fn insertOrderedDescending(link: *Link, node: *Node) *Node {
-            orderGuard();
-            const head = base(link);
-            return insertSortFn(greaterThanEq)(head, node);
         }
 
         inline fn orderGuard() void {
@@ -350,6 +375,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         fn insertSortFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node, *Node) *Node {
             return struct {
                 pub fn insert(head: *Node, node: *Node) *Node {
+                    orderGuard();
                     if (orderFn(node, head)) {
                         @field(node, next) = head;
                         return node;
@@ -374,6 +400,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         fn inOrderFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node) bool {
             return struct {
                 pub fn inorder(head: *Node) bool {
+                    orderGuard();
                     var this: *Node = head;
                     while (@field(this, next)) |next_node| {
                         if (orderFn(this, next_node)) {
@@ -393,14 +420,36 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         fn mergeSortFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node) *Node {
             return struct {
                 pub fn msort(n: *Node) *Node {
+                    orderGuard();
                     var ep: ?*Node = null;
                     var set: [LISTSIZE]?*Node = .{null} ** LISTSIZE;
                     var m_list: ?*Node = n;
-                    // TODO: Galloping pass
+                    var first = true;
                     while (m_list) |list| {
                         ep = list;
-                        m_list = @field(list, next);
-                        @field(ep.?, next) = null;
+                        // First, "gallop" past any already-sorted values,
+                        // this brings the merge down to O(n) for an already-
+                        // sorted list.
+                        var m_gallop: ?*Node = list;
+                        while (m_gallop) |gallop| {
+                            if (@field(gallop, next)) |g_next| {
+                                if (orderFn(gallop, g_next)) {
+                                    m_gallop = g_next;
+                                } else {
+                                    m_list = g_next;
+                                    @field(gallop, next) = null;
+                                    break;
+                                }
+                            } else {
+                                if (first) {
+                                    // sorted!
+                                    return n;
+                                }
+                                m_list = null;
+                                break;
+                            }
+                        }
+                        first = false;
                         var i: usize = 0;
                         while (i < LISTSIZE - 1 and set[i] != null) : (i += 1) {
                             ep = merge(set[i], ep);
@@ -457,6 +506,19 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                     return head;
                 }
             }.msort;
+        }
+
+        /// Reverse the list starting from this node in-place.
+        fn reverseNode(indirect: *?*Node) void {
+            if (indirect.* == null) {
+                return;
+            }
+            var current: *Node = indirect.*.?;
+            while (@field(current, next)) |the_next| {
+                @field(current, next) = @field(the_next, next);
+                @field(the_next, next) = indirect.*;
+                indirect.* = the_next;
+            }
         }
 
         //| Singly Linked List container type
@@ -572,7 +634,9 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// Reverse the order of the nodes in the list, in-place, in
             /// O(n).  Legal to call on an empty list.
             pub fn reverse(list: *List) void {
+                const temp = list.first;
                 reverseNode(&list.first);
+                list.last = temp;
             }
 
             /// Concatenate the argument list to the end of the receiver list in O(1).
@@ -619,12 +683,13 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
 
             /// Iterate over all nodes, returning the count.
             ///
-            /// This operation is O(n). Consider tracking the length separately
+            /// This operation is O(n).  Consider tracking the length separately
             /// rather than computing it.
             pub fn len(list: *const List) usize {
                 if (list.first) |n| {
                     return 1 + @field(n, link_field).countChildren();
                 } else {
+                    assert(list.last == null);
                     return 0;
                 }
             }
@@ -1328,6 +1393,12 @@ test "Sorted singly-linked list" {
         try expectEqual(9, rsorted.mixer.countChildren() + 1);
         try expectEqual(rsorted, still_rsorted);
         try expect(still_rsorted.mixer.isOrderedDescending());
+        const resorted = rsorted.mixer.reverse();
+        try expect(resorted.mixer.isOrderedAscending());
+        const reresorted = resorted.mixer.reverse();
+        try expect(reresorted.mixer.isOrderedDescending());
+        const antireresorted = reresorted.mixer.sortDescending();
+        try expect(antireresorted.mixer.isOrderedDescending());
     }
 }
 
