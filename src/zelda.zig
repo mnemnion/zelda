@@ -212,13 +212,17 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         /// node is found.  O(n).  Prefer keeping a `List`.
         pub fn findLast(link: *Link) *Node {
             var it = base(link);
+            var hmm: usize = 0;
             while (true) {
+                hmm += 1;
                 it = @field(it, next) orelse return it;
             }
         }
 
         /// Iterate over each next node, returning the count of all nodes except
-        /// the starting one.  O(n).
+        /// the starting one.  O(n).  This is provided for compatibility with the
+        /// standard library, which uses it for reasons I find obscure.  `len` is
+        /// also available and does what you'd expect.
         pub fn countChildren(link: *const Link) usize {
             const node: *const Node = cbase(link);
             var count: usize = 0;
@@ -252,7 +256,17 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             return .{ .first = node, .last = last };
         }
 
-        //| Ordered List Library
+        /// Answer whether the node is found in the list.  Provided
+        /// for diagnostic and testing purposes.  Compares by pointer,
+        /// not by value.
+        pub fn belongsTo(link: *const Link, n2: *const Node) bool {
+            var m_node: ?*const Node = cbase(link);
+            while (m_node) |node| : (m_node = @field(node, next)) {
+                if (node == n2) return true;
+            } else return false;
+        }
+
+        //| Ordered List Operations
         //|
         //| Ideally these would only exist in the namespace if an order function
         //| were provided.  I tried making them `void` unless there's an order
@@ -602,8 +616,8 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// Find and remove `node` from the list.  This compares pointers,
             /// not values.  Asserts that `node` belongs to this list.  If the
             /// node is found in the list, the 'next' field will be `null`, if
-            /// it is not, the program will crash, or worse.  This might be
-            /// faster to use than plain `remove`, or it might just be more
+            /// it is not found, the program will crash, or worse.  This might
+            /// be faster to use than plain `remove`, or it might just be more
             /// dangerous to no actual benefit.  Benchmark or YOLO, it's your
             /// circus.
             pub fn removeUnchecked(list: *List, node: *Node) void {
@@ -629,6 +643,13 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                         current = next_node;
                     }
                 }
+            }
+
+            /// Answer whether the node is found in the list.  Provided
+            /// for diagnostic and testing purposes.
+            pub fn belongsTo(list: *const List, node: *const Node) bool {
+                if (list.last == node) return true;
+                return @field(list.first, link_field).belongsTo(node);
             }
 
             /// Reverse the order of the nodes in the list, in-place, in
@@ -663,7 +684,8 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// empty, and must in fact have no less than two members.  Asserts
             /// it is not the last member of the list.  O(1).
             pub fn splitAfter(list: *List, node: *Node) List {
-                assert(list.last != null and list.last != node);
+                assert(list.last != null);
+                assert(list.last != node);
                 const new_first = @field(node, next);
                 const new_last = list.last;
                 list.last = node;
@@ -706,17 +728,211 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                 }
             }
 
-            // Reverse the list starting from this node in-place.
-            fn reverseNode(indirect: *?*Node) void {
-                if (indirect.* == null) {
-                    return;
+            //| Ordered Operations
+
+            /// Insert the node into the list, such that if already ordered
+            /// ascending, the returned list will remain in ascending order.
+            /// Strictly, if it is greater than the last node's value, it will
+            /// be after that, otherwise it will be before the first node it
+            /// sees which is equal to or greater than its value.
+            pub fn insertOrderedAscending(list: *List, node: *Node) void {
+                if (greaterThan(node, list.last.?)) {
+                    @field(list.last.?, next) = node;
+                    @field(node, next) = null;
+                } else {
+                    list.first = @field(list.first.?, link_field).insertOrderedAscending(node);
                 }
-                var current: *Node = indirect.*.?;
-                while (@field(current, next)) |the_next| {
-                    @field(current, next) = @field(the_next, next);
-                    @field(the_next, next) = indirect.*;
-                    indirect.* = the_next;
+            }
+
+            /// Insert the argument node into the list, such that if already
+            /// ordered descending, the returned list will remain in descending
+            /// order. Strictly, if it is less than the last node's value, it
+            /// will be after that, otherwise it will be before the first node
+            /// it sees which is equal to or less than its value.
+            pub fn insertOrderedDescending(list: *List, node: *Node) *Node {
+                if (lessThan(node, list.last.?)) {
+                    @field(list.last.?, next) = node;
+                    @field(node, next) = null;
+                } else {
+                    list.first = @field(list.first.?, link_field).insertOrderedDescending(node);
                 }
+            }
+
+            /// Answer if the list is sorted in ascending order.  Perhaps surprisingly,
+            /// an empty list will answer `true`.
+            pub fn isOrderedAscending(list: *List) bool {
+                if (list.first == null) return true;
+                return @field(list.first.?, link_field).isOrderedAscending();
+            }
+
+            /// Answer if the list is sorted in descending order.  Perhaps surprisingly,
+            /// an empty list will answer `true`.
+            pub fn isOrderedDescending(list: *List) bool {
+                if (list.first == null) return true;
+                return @field(list.first.?, link_field).isOrderedDescending();
+            }
+
+            /// Sort the list in-place into ascending order.
+            pub fn sortAscending(list: *List) void {
+                if (list.first == null or list.first == list.last) return;
+                list.first, list.last = mergeSortListFn(lessThan)(list.first.?);
+            }
+
+            /// Sort the list in-place into descending order.
+            pub fn sortDescending(list: *List) void {
+                if (list.first == null or list.first == list.last) return;
+                list.first, list.last = mergeSortListFn(greaterThan)(list.first.?);
+            }
+
+            fn mergeSortListFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node) struct { *Node, *Node } {
+                return struct {
+                    pub fn msort(n: *Node) struct { *Node, *Node } {
+                        orderGuard();
+                        var ep: ?*Node = null;
+                        var set: [LISTSIZE]?*Node = .{null} ** LISTSIZE;
+                        var m_list: ?*Node = n;
+                        var first = true;
+                        while (m_list) |list| {
+                            ep = list;
+                            // First, "gallop" past any already-sorted values,
+                            // this brings the merge down to O(n) for an already-
+                            // sorted list.
+                            var m_gallop: ?*Node = list;
+                            while (m_gallop) |gallop| {
+                                if (@field(gallop, next)) |g_next| {
+                                    if (orderFn(gallop, g_next)) {
+                                        m_gallop = g_next;
+                                    } else {
+                                        m_list = g_next;
+                                        @field(gallop, next) = null;
+                                        break;
+                                    }
+                                } else {
+                                    if (first) {
+                                        // sorted!
+                                        return .{ n, gallop };
+                                    }
+                                    m_list = null;
+                                    break;
+                                }
+                            }
+                            first = false;
+                            var i: usize = 0;
+                            while (i < LISTSIZE - 1 and set[i] != null) : (i += 1) {
+                                ep = merge(set[i], ep);
+                                set[i] = null;
+                            }
+                            set[i] = merge(set[i], ep);
+                        }
+                        ep = null;
+                        // Compress the fragments.  We could just count them but
+                        // it takes the same amount of time.
+                        var off: usize = 0;
+                        for (0..LISTSIZE) |i| {
+                            if (set[i]) |_| {
+                                set[i - off] = set[i];
+                            } else {
+                                off += 1;
+                            }
+                        } // The amount remaining is just:
+                        var amt = LISTSIZE - off;
+                        assert(amt > 0);
+                        var i: usize = 0;
+                        while (amt > 1) {
+                            ep = merge(set[i].?, ep);
+                            i += 1;
+                            amt -= 1;
+                        }
+                        // Ep might be null here, if we only have one list,
+                        // but that's ok:
+                        return mergeFinal(set[i], ep);
+                    }
+
+                    // Merge two linked lists, given the head. Either the first or the
+                    // second may be null: by construction, they will never both be
+                    // null, but it's harmless to our purposes to return a `?*T`, so
+                    // we wouldn't benefit from that fact and don't take advantage of it.
+                    fn merge(maybe_a: ?*Node, maybe_b: ?*Node) ?*Node {
+                        if (maybe_a == null) return maybe_b;
+                        if (maybe_b == null) return maybe_a;
+                        var a: ?*Node = maybe_a;
+                        var b: ?*Node = maybe_b;
+                        const head: *Node = if (orderFn(a.?, b.?)) head: {
+                            const h = a.?;
+                            a = @field(h, next);
+                            break :head h;
+                        } else head: {
+                            const h = b.?;
+                            b = @field(h, next);
+                            break :head h;
+                        };
+                        var ptr: *Node = head;
+                        while (a != null and b != null) {
+                            const a_ptr = a.?;
+                            const b_ptr = b.?;
+                            if (orderFn(a_ptr, b_ptr)) {
+                                @field(ptr, next) = a_ptr;
+                                ptr = a_ptr;
+                                a = @field(a_ptr, next);
+                            } else {
+                                @field(ptr, next) = b_ptr;
+                                ptr = b_ptr;
+                                b = @field(b_ptr, next);
+                            }
+                        }
+                        if (a) |a_ptr| {
+                            @field(ptr, next) = a_ptr;
+                        } else {
+                            @field(ptr, next) = b;
+                        }
+                        return head;
+                    }
+
+                    // Final merge: "a" is never null, but we need a variable anyway, so it's
+                    // convenient to cast here.  This time we retain or find the tail and
+                    // return it as well.
+                    fn mergeFinal(maybe_a: ?*Node, maybe_b: ?*Node) struct { *Node, *Node } {
+                        assert(maybe_a != null);
+                        if (maybe_b == null) {
+                            return .{ maybe_a.?, @field(maybe_a.?, link_field).findLast() };
+                        }
+                        var a: ?*Node = maybe_a;
+                        var b: ?*Node = maybe_b;
+                        const head: *Node = if (orderFn(a.?, b.?)) head: {
+                            const h = a.?;
+                            a = @field(h, next);
+                            break :head h;
+                        } else head: {
+                            const h = b.?;
+                            b = @field(h, next);
+                            break :head h;
+                        };
+                        var ptr: *Node = head;
+                        while (a != null and b != null) {
+                            const a_ptr = a.?;
+                            const b_ptr = b.?;
+                            if (orderFn(a_ptr, b_ptr)) {
+                                @field(ptr, next) = a_ptr;
+                                ptr = a_ptr;
+                                a = @field(a_ptr, next);
+                            } else {
+                                @field(ptr, next) = b_ptr;
+                                ptr = b_ptr;
+                                b = @field(b_ptr, next);
+                            }
+                        }
+                        if (a) |a_ptr| {
+                            @field(ptr, next) = a_ptr;
+                            return .{ head, @field(a_ptr, link_field).findLast() };
+                        } else if (b) |b_ptr| {
+                            @field(ptr, next) = b_ptr;
+                            return .{ head, @field(b_ptr, link_field).findLast() };
+                        } else {
+                            // Special case of sorting a list with one node:
+                            return .{ head, ptr };
+                        }
+                    }
+                }.msort;
             }
         };
     };
@@ -1326,27 +1542,28 @@ test "A Link to the Past" {
     try testing.expect(list.first.?.node.?.node == null);
 }
 
+const Sorted = struct {
+    val: u32,
+    next_val: ?*S = null,
+    mixer: Link = .{},
+
+    pub const empty: S = .{ .val = undefined };
+
+    pub const S = @This();
+    pub const Link = aLinkToThePast(S);
+
+    pub inline fn zeldaOrderFn(a: *const S, b: *const S) Order {
+        const sign: i64 = @as(i64, a.val) - @as(i64, b.val);
+        if (sign < 0)
+            return .lt
+        else if (sign == 0)
+            return .eq
+        else
+            return .gt;
+    }
+};
+
 test "Sorted singly-linked list" {
-    const Sorted = struct {
-        val: u32,
-        next_val: ?*S = null,
-        mixer: Link = .{},
-
-        pub const empty: S = .{ .val = undefined };
-
-        pub const S = @This();
-        pub const Link = aLinkToThePast(S);
-
-        pub inline fn zeldaOrderFn(a: *const S, b: *const S) Order {
-            const sign: i64 = @as(i64, a.val) - @as(i64, b.val);
-            if (sign < 0)
-                return .lt
-            else if (sign == 0)
-                return .eq
-            else
-                return .gt;
-        }
-    };
     try testing.expect(Sorted.Link.has_order);
     //| Merge sorts
     var sorts: [6]Sorted = .{Sorted.empty} ** 6;
@@ -1399,6 +1616,79 @@ test "Sorted singly-linked list" {
         try expect(reresorted.mixer.isOrderedDescending());
         const antireresorted = reresorted.mixer.sortDescending();
         try expect(antireresorted.mixer.isOrderedDescending());
+    }
+}
+
+test "more sorts" {
+    var sorts: [512]Sorted = .{Sorted.empty} ** 512;
+    var prng = std.Random.DefaultPrng.init(rand: {
+        var seed: u64 = undefined;
+        std.posix.getrandom(std.mem.asBytes(&seed)) catch {
+            std.debug.print("Failed randomness call, skipping test (weird)\n", .{});
+            return;
+        };
+        break :rand seed;
+    });
+    for (0..512) |i| {
+        sorts[i].val = prng.random().int(u32);
+        if (i < 511) {
+            sorts[i].next_val = &sorts[i + 1];
+        }
+    }
+    {
+        const sorted = sorts[0].mixer.sortAscending();
+        try expect(sorted.mixer.isOrderedAscending());
+        const dsorted = sorted.mixer.sortDescending();
+        try expect(dsorted.mixer.isOrderedDescending());
+    }
+    for (0..512) |i| {
+        sorts[i].val = prng.random().int(u32);
+        if (i < 511) {
+            sorts[i].next_val = &sorts[i + 1];
+        }
+    }
+    sorts[511].next_val = null;
+    {
+        var list = sorts[0].mixer.toList();
+        list.sortAscending();
+        try expect(list.first.?.mixer.isOrderedAscending());
+        const biggest = list.last;
+        list.sortDescending();
+        try expect(list.first.?.mixer.isOrderedDescending());
+        try expectEqual(biggest, list.first.?);
+        try expectEqual(512, list.len());
+    }
+    for (0..512) |i| {
+        sorts[i].val = prng.random().int(u32);
+        if (i < 511) {
+            sorts[i].next_val = &sorts[i + 1];
+        }
+    }
+    sorts[511].next_val = null;
+    {
+        var list = sorts[0].mixer.toSortedListAscending();
+        try expect(list.first.?.mixer.isOrderedAscending());
+        const biggest = list.last;
+        list.sortDescending();
+        try expect(list.first.?.mixer.isOrderedDescending());
+        list.sortDescending();
+        try expect(list.first.?.mixer.isOrderedDescending());
+        try expectEqual(biggest, list.first.?);
+        try expectEqual(512, list.len());
+        var split_at = prng.random().intRangeLessThan(u32, 0, 512);
+        while (&sorts[split_at] == list.first or &sorts[split_at] == list.last) {
+            split_at = prng.random().intRangeLessThan(u32, 0, 512);
+        }
+        var half_list = list.splitAfter(&sorts[split_at]);
+        half_list.concat(&list);
+        try expectEqual(512, half_list.len());
+        half_list.sortDescending();
+        try expect(half_list.first.?.mixer.isOrderedDescending());
+        try expect(half_list.isOrderedDescending());
+        half_list.sortAscending();
+        try expect(half_list.first.?.mixer.isOrderedAscending());
+        try expect(half_list.isOrderedAscending());
+        try expectEqual(512, half_list.len());
     }
 }
 
