@@ -157,12 +157,13 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         pub const has_order = if (m_orderFn) |_| true else if (!info_has_orderFn) @hasDecl(Node, "zeldaOrderFn") else false;
         const order_name = if (m_orderFn) |orderFn| orderFn else if (has_order) "zeldaOrderFn" else "";
 
-        pub const has_limit = @hasDecl(Node, "zelda_seek_limit") or @hasDecl(Node, "ZELDA_SEEK_LIMIT");
-        pub const seek_limit = if (!has_limit) {} //
-            else if (@hasDecl(Node, "ZELDA_SEEK_LIMIT"))
+        pub const seek_limit =
+            if (@hasDecl(Node, "ZELDA_SEEK_LIMIT"))
                 Node.ZELDA_SEEK_LIMIT
-            else
-                Node.zelda_seek_limit;
+            else if (@hasDecl(Node, "zelda_seek_limit"))
+                Node.zelda_seek_limit
+            else {};
+        pub const has_limit = @TypeOf(seek_limit) != void and @TypeOf(seek_limit) != @TypeOf(null);
 
         inline fn base(link: *Link) *Node {
             return @alignCast(@fieldParentPtr(link_field, link));
@@ -448,8 +449,6 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                 }
             }.inorder;
         }
-
-        const LISTSIZE = 32;
 
         fn mergeSortFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node) *Node {
             return struct {
@@ -824,7 +823,9 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                             // this brings the merge down to O(n) for an already-
                             // sorted list.
                             var m_gallop: ?*Node = list;
+                            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
                             while (m_gallop) |gallop| {
+                                if (has_limit) limit += 1;
                                 if (@field(gallop, next)) |g_next| {
                                     if (orderFn(gallop, g_next)) {
                                         m_gallop = g_next;
@@ -841,6 +842,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                                     m_list = null;
                                     break;
                                 }
+                                if (has_limit) if (limit >= seek_limit) @panic("mergeSortList exceeded seek limit");
                             }
                             first = false;
                             var i: usize = 0;
@@ -954,8 +956,9 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                             @field(ptr, next) = b_ptr;
                             return .{ head, @field(b_ptr, link_field).findLast() };
                         } else {
-                            // Special case of sorting a list with one node:
-                            return .{ head, ptr };
+                            // Unreachable but if it weren't we'd do this:
+                            return .{ head, ptr }; // So why not ¯\_(ツ)_/¯
+                            //
                         }
                     }
                 }.msort;
@@ -975,8 +978,8 @@ pub const DoubleLinkedListPosition = enum {
 
 fn doublyLinkedListInner(Node: type, info: anytype) type {
     const info_has_orderFn = @hasField(@TypeOf(info), "orderFn");
-    const m_next: ?[]const u8 = if (@hasField(@TypeOf(info), "next")) info.next else null;
-    const m_prev: ?[]const u8 = if (@hasField(@TypeOf(info), "prev")) info.prev else null;
+    const maybe_next: ?[]const u8 = if (@hasField(@TypeOf(info), "next")) info.next else null;
+    const maybe_prev: ?[]const u8 = if (@hasField(@TypeOf(info), "prev")) info.prev else null;
     const m_orderFn: ?[]const u8 = if (info_has_orderFn) info.orderFn else null;
 
     return struct {
@@ -997,7 +1000,9 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             );
         };
 
-        const the_names: struct { []const u8, []const u8 } = if (m_next) |the_next| .{ the_next, m_prev.? } else next_names: {
+        const the_names: struct { []const u8, []const u8 } = if (maybe_next) |the_next| //
+            .{ the_next, maybe_prev.? } //
+        else next_names: {
             var find_names: struct { []const u8, []const u8 } = undefined;
             const t_fields = @typeInfo(Node).@"struct".fields;
             var first = true;
@@ -1025,6 +1030,14 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         const has_order = if (m_orderFn) |_| true else if (!info_has_orderFn) @hasDecl(Node, "zeldaOrderFn") else false;
         const order_name = if (m_orderFn) |orderFn| orderFn else if (has_order) "zeldaOrderFn" else "";
 
+        pub const seek_limit =
+            if (@hasDecl(Node, "ZELDA_SEEK_LIMIT"))
+                Node.ZELDA_SEEK_LIMIT
+            else if (@hasDecl(Node, "zelda_seek_limit"))
+                Node.zelda_seek_limit
+            else {};
+        pub const has_limit = @TypeOf(seek_limit) != void and @TypeOf(seek_limit) != @TypeOf(null);
+
         inline fn base(link: *Link) *Node {
             return @alignCast(@fieldParentPtr(link_field, link));
         }
@@ -1033,8 +1046,33 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             return @alignCast(@fieldParentPtr(link_field, link));
         }
 
-        /// Insert the receiver node after the parameter node.
-        pub fn insertAfter(link: *Link, new_node: *Node) void {
+        /// Return the node as a List, heedless of where in that list it happens to
+        /// be.  O(n).
+        ///
+        /// This function is first for a reason.  Despite the quite rich
+        /// collection of list-manipulations available for direct list-doings,
+        /// a doubly-linked list is far more comfortable to operate _as_ a
+        /// list, not simply a node with stuff hanging off it in one or both
+        /// directions.
+        pub fn toList(link: *Link) List {
+            return .{ .first = link.findFirst(), .last = link.findLast() };
+        }
+
+        /// Insert the argument node forward of the receiver node.  The calling node
+        /// is assumed to be on list, the argument is not.  This can concatenate two
+        /// lists, if the receiver is a `.last` and the argument a `.first`.  It
+        /// can also, as a consequence, create cycles.  If `new_node` is on another
+        /// list, that can leak memory: this function assumes you know what you're
+        /// doing.
+        ///
+        /// # Example use (assuming .link, .next, .prev)
+        ///
+        /// ```zig
+        /// a.link.emplaceForward(b);
+        /// assert(a.next == b);
+        /// assert(b.prev == a);
+        /// ```
+        pub fn emplaceForward(link: *Link, new_node: *Node) void {
             const node = base(link);
             @field(new_node, prev) = node;
             if (@field(node, next)) |next_node| {
@@ -1043,12 +1081,28 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 @field(next_node, prev) = new_node;
             } else {
                 // Last element of the list.
+                // Either we allow cycles (no null set),
+                // or we unexpectedly sever the list (null set),
+                // so we do the former.
             }
             @field(node, next) = new_node;
         }
 
-        /// Insert the receiver node before the parameter node.
-        pub fn insertBefore(link: *Link, new_node: *Node) void {
+        /// Insert the argument node backward of the receiver node.  The
+        /// calling node is assumed to be on list, the argument is not.  This
+        /// can concatenate two lists, if the receiver is a `.first` and
+        /// the argument a `.last`.  It can also, as a consequence, create
+        /// cycles. If `new_node` is on another list, that can leak memory: this
+        /// function assumes you know what you're doing.
+        ///
+        /// # Example use (assuming .link, .next, .prev)
+        ///
+        /// ```zig
+        /// a.link.emplaceBackward(b);
+        /// assert(a.prev == b);
+        /// assert(b.next == a);
+        /// ```
+        pub fn emplaceBackward(link: *Link, new_node: *Node) void {
             const node = base(link);
             @field(new_node, next) = node;
             if (@field(node, prev)) |prev_node| {
@@ -1097,9 +1151,28 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             @field(node, next) = null;
         }
 
-        /// Unlink from the next structure, if any.  Returns the unlinked
+        /// Remove the receiver node from the linked list.  If it has two
+        /// neighbors, or none, this returns `null`.  If it has one neighbor,
+        /// the neighbor is returned.  Code will generally know which end is
+        /// expected, which is in any case easy to check with `positionInList`.
+        pub fn removeSelfReturnEnd(link: *Link) ?*Node {
+            const node = base(link);
+            if (@field(node, prev) == null) {
+                // .solo or .first:
+                defer link.removeSelfFromList();
+                return @field(node, next);
+            } else if (@field(node, next) == null) {
+                // .last:
+                defer link.removeSelfFromList();
+                return @field(node, prev);
+            } else {
+                link.removeSelfFromList();
+            }
+        }
+
+        /// Unlink from the forward structure, if any.  Returns the unlinked
         /// struct, or null.
-        pub fn unlinkNext(link: *Link) ?*Node {
+        pub fn unlinkForward(link: *Link) ?*Node {
             const node = base(link);
             const this_next = @field(node, next) orelse return null;
             @field(this_next, prev) = null;
@@ -1107,9 +1180,9 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             return this_next;
         }
 
-        /// Unlink from the previous structure, if any.  Returns the unlinked
+        /// Unlink from the backward structure, if any.  Returns the unlinked
         /// struct, or null.
-        pub fn unlinkPrev(link: *Link) ?*Node {
+        pub fn unlinkBackward(link: *Link) ?*Node {
             const node = base(link);
             const this_prev = @field(node, prev) orelse return null;
             @field(this_prev, next) = null;
@@ -1122,19 +1195,19 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// `List`, this condition can be detected (given otherwise proper use)
         /// if `node.next` is `null` after the call.
         pub fn swapForward(link: *Link) void {
-            const node = base(link);
             // ABCD -- ACBD.  node is B
-            const nodeC: *Node = @field(node, next) orelse return;
-            const nodeA: ?*Node = @field(node, prev);
+            const nodeB = base(link);
+            const nodeC: *Node = @field(nodeB, next) orelse return;
+            const nodeA: ?*Node = @field(nodeB, prev);
             const nodeD: ?*Node = @field(nodeC, next);
 
             // B <-> D
-            if (nodeD) |D| @field(D, prev) = node;
-            @field(node, next) = nodeD;
+            if (nodeD) |D| @field(D, prev) = nodeB;
+            @field(nodeB, next) = nodeD;
 
             // C <-> B
-            @field(node, prev) = nodeC;
-            @field(nodeC, next) = node;
+            @field(nodeB, prev) = nodeC;
+            @field(nodeC, next) = nodeB;
 
             // A <-> C
             @field(nodeC, prev) = nodeA;
@@ -1146,19 +1219,19 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// `List`, this condition can be detected (given otherwise proper use)
         /// if `node.prev` is `null` after the call.
         pub fn swapBackward(link: *Link) void {
-            const node = base(link);
             // ABCD -- ACBD.  node is C
-            const nodeB: *Node = @field(node, prev) orelse return;
-            const nodeD: ?*Node = @field(node, next);
+            const nodeC = base(link);
+            const nodeB: *Node = @field(nodeC, prev) orelse return;
+            const nodeD: ?*Node = @field(nodeC, next);
             const nodeA: ?*Node = @field(nodeB, prev);
 
             // A <-> C
-            @field(node, prev) = nodeA;
-            if (nodeA) |A| @field(A, next) = node;
+            @field(nodeC, prev) = nodeA;
+            if (nodeA) |A| @field(A, next) = nodeC;
 
             // C <-> B
-            @field(node, next) = nodeB;
-            @field(nodeB, prev) = node;
+            @field(nodeC, next) = nodeB;
+            @field(nodeB, prev) = nodeC;
 
             // B <-> D
             @field(nodeB, next) = nodeD;
@@ -1171,7 +1244,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// the list containing the node.
         pub fn spliceForward(link: *Link, list: *List) void {
             const node = base(link);
-            const node_next = @field(node, link_field).unlinkNext();
+            const node_next = @field(node, link_field).unlinkForward();
 
             @field(node, next) = list.first;
             @field(list.first.?, prev) = node;
@@ -1186,7 +1259,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// the list containing the node.
         pub fn spliceBackward(link: *Link, list: *List) void {
             const node = base(link);
-            const node_prev = @field(node, link_field).unlinkPrev();
+            const node_prev = @field(node, link_field).unlinkBackward();
             @field(node, prev) = list.last;
             @field(list.last.?, next) = node;
 
@@ -1194,21 +1267,93 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             if (node_prev) |np| @field(np, next) = list.first;
         }
 
+        /// This traverses the list forward, setting all backward links to point
+        /// to their proper target.  It can be useful to pretend a doubly-linked
+        /// list is singly-linked when chopping and splicing, this function
+        /// restores the invariant.  As a convenience, this returns the _last_
+        /// node in the forward direction.  You already have the first one.
+        pub fn fixBackLinks(link: *Link) *Node {
+            const node = base(link);
+            var m_node: ?*Node = node;
+            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+            while (@field(m_node, next)) |next_node| {
+                if (has_limit) limit += 1;
+                @field(next_node, prev) = m_node;
+                m_node = next_node;
+                if (has_limit) if (limit >= seek_limit) @panic("fixBackLinks exceeded seek limit");
+            }
+            return m_node.?;
+        }
+
+        /// This traverses the list backward, setting all forward links to
+        /// point to their proper target.  This is the exotic companion to
+        /// `fixBacklinks`, expected to be rarely used in practice.  Note that
+        /// this returns the _last_ node in the _backward_ direction, since you
+        /// already have the first one.
+        pub fn fixForwardLinks(link: *Link) *Node {
+            const node = base(link);
+            var m_node: ?*Node = node;
+            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+            while (@field(m_node, prev)) |prev_node| {
+                if (has_limit) limit += 1;
+                @field(prev_node, next) = m_node;
+                m_node = prev_node;
+                if (has_limit) if (limit >= seek_limit) @panic("fixForwardLinks exceeded seek limit");
+            }
+            return m_node.?;
+        }
+
+        /// Traverse forward until the final node is reached, then return it.
+        /// This may be the same node as the receiver.  Backward links are
+        /// ignored.
+        pub fn findLast(link: *Link) *Node {
+            const node = base(link);
+            var m_node: ?*Node = node;
+            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+            while (@field(m_node.?, next)) |next_node| {
+                if (has_limit) limit += 1;
+                m_node = next_node;
+                if (has_limit) if (limit >= seek_limit) @panic("findEndForward exceeded seek limit");
+            }
+            return m_node.?;
+        }
+
+        /// Traverse backward until the final node is reached, then return it.
+        /// This may be the same node as the receiver.  Forward links are
+        /// ignored.
+        pub fn findFirst(link: *Link) *Node {
+            const node = base(link);
+            var m_node: ?*Node = node;
+            var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+            while (@field(m_node.?, prev)) |next_node| {
+                if (has_limit) limit += 1;
+                m_node = next_node;
+                if (has_limit) if (limit >= seek_limit) @panic("findEndBackward exceeded seek limit");
+            }
+            return m_node.?;
+        }
+
+        //| NOTE: The following four functions deliberately do not include the
+        //| iteration limit.  Two reasons: they contain logic which will break
+        //| out of cycles, and they are strictly diagnostic, having no place in
+        //| production code.  If they had the iteration limit, they would answer
+        //| a second question not specified by the name, which is bad form.
+
         /// Answers whether the node is in a well-formed double linked
         /// list when following the 'next' pointers.  Perhaps surprisingly,
         /// this answers `true` if `node.next` is `null`.  A `false` answer
         /// means there's a problem with your list.  This is a diagnostic
-        /// tool.  If `node.prev` is `null`, this will detect a forward half
-        /// cyle as a broken link.
+        /// tool.  A cyclic list is not considered "well-formed" for the
+        /// purposes of this function.
         pub fn inDoubleLinkedListForward(link: *const Link) bool {
             const node = cbase(link);
             var this_node = node;
-            var maybe_next = @field(this_node, next);
-            while (maybe_next) |next_node| {
+            var m_next = @field(this_node, next);
+            while (m_next) |next_node| {
                 if (@field(next_node, prev) != this_node) return false;
                 if (node == next_node) return false;
                 this_node = next_node;
-                maybe_next = @field(next_node, next);
+                m_next = @field(next_node, next);
             }
             return true;
         }
@@ -1217,17 +1362,17 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// list when following the 'prev' pointers.  Perhaps surprisingly,
         /// this answers `true` if `node.prev` is `null`.  A `false` answer
         /// means there's a problem with your list.  This is a diagnostic
-        /// tool.  If `node.next` is `null`, this will detect a backward half
-        /// cycle as a broken link.
+        /// tool.  A cyclic list is not considered "well-formed" for the
+        /// purposes of this function..
         pub fn inDoubleLinkedListBackward(link: *const Link) bool {
             const node = cbase(link);
             var this_node = node;
-            var maybe_prev = @field(this_node, prev);
-            while (maybe_prev) |prev_node| {
+            var m_prev = @field(this_node, prev);
+            while (m_prev) |prev_node| {
                 if (@field(prev_node, next) != this_node) return false;
                 if (node == prev_node) return false;
                 this_node = prev_node;
-                maybe_prev = @field(prev_node, prev);
+                m_prev = @field(prev_node, prev);
             }
             return true;
         }
@@ -1287,28 +1432,84 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             return false;
         }
 
-        /// List type for doubly-linked lists of the provided data structure.
-        /// Create with the `.empty` declaration literal.
+        //| Ordering functions
+        //|
+        //| For doubly-linked lists it is utterly pointless to have one,
+        //| have it be sorted, and not retain the tail.  So the nodes
+        //| have only two functions which sort and return a List, the
+        //| remainder of the (numerous!)
+
+        /// Sort (forward) in ascending order.  Asserts that the backward
+        /// link is `null`.  Because the merge sort rebuilds the backlinks at
+        /// the end of a sort, it is free to include the tail, so there is no
+        /// `*Node`-returning equivalent.
+        pub fn sortAscending(link: *Link) List {
+            const node = base(link);
+            assert(@field(node, prev) == null);
+            var list: List = undefined;
+            list.first, list.last = mergeSortFn(lessThan)(node);
+            return list;
+        }
+
+        /// Sort (forward) in ascending order.  Asserts that the backward
+        /// link is `null`.  Because the merge sort rebuilds the backlinks at
+        /// the end of a sort, it is free to include the tail, so there is no
+        /// `*Node`-returning equivalent.
+        pub fn sortDescending(link: *Link) List {
+            const node = base(link);
+            assert(@field(node, prev) == null);
+            var list: List = undefined;
+            list.first, list.last = mergeSortFn(greaterThan)(node);
+            return list;
+        }
+
+        /// A doubly-linked list of `*Node`, comprising the first and last
+        /// elements of the list.  The API preserves the following properties:
+        ///
+        /// - If there is a first node, there will be a last.
+        /// - The last node's forward-field will be `null`, as will the first node's
+        ///   backward-field.  This type is not suitable for representing a section
+        ///   of a list; those can be useful to have, but this is not the data structure
+        ///   with which to have them.  It is conceivable that Zelda will grow such a
+        ///   data structure someday, although `struct { *Node, *Node }` is probably
+        ///   adequate.
+        /// - Nodes removed from the list are mutually removed from the list, that is,
+        ///   the list is also removed from the node.
+        /// - Nodes emplaced onto the list are asserted to be in a condition where
+        ///   doing so will not break some other list.  Generally this means that they
+        ///   are "solo", that is, both links `null`, not always.
+        ///
+        /// The API also asserts these properties often, so if your code does any
+        /// direct manipulation of the list, take care to maintain them.
         pub const List = struct {
             first: ?*Node,
             last: ?*Node,
 
             pub const empty: List = .{ .first = null, .last = null };
 
-            /// Inserts `new_node` after `existing_node`, adjusting `list.last` if needed.
-            pub fn insertAfter(list: *List, existing_node: *Node, new_node: *Node) void {
-                @field(existing_node, link_field).insertAfter(new_node);
+            /// Inserts `new_node` after `existing_node`, adjusting `list.last`
+            /// if needed. `new_node` is asserted to be `.solo` (null on both
+            /// links). `existing_node` is assumed to be some member of the
+            /// list.
+            pub fn emplaceForward(list: *List, existing_node: *Node, new_node: *Node) void {
+                assert(@field(new_node, link_field).positionInList() == .solo);
+                @field(existing_node, link_field).emplaceForward(new_node);
                 // If new_node is inserted at the end of the list, its 'next' will be null:
                 if (@field(new_node, next) == null) {
+                    assert(@field(list.last.?, next) == new_node);
                     list.last = new_node;
                 }
             }
 
-            /// Inserts `new_node` before `existing_node`, adjusting `list.first` if needed.
-            pub fn insertBefore(list: *List, existing_node: *Node, new_node: *Node) void {
-                @field(existing_node, link_field).insertBefore(new_node);
+            /// Inserts `new_node` before `existing_node`, adjusting
+            /// `list.first` if needed. `new_node` is asserted to be `.solo`
+            /// (null on both links). `existing_node` is assumed to be some
+            /// member of the list.
+            pub fn emplaceBackward(list: *List, existing_node: *Node, new_node: *Node) void {
+                @field(existing_node, link_field).emplaceBackward(new_node);
                 // If new_node is inserted at the front of the list, its 'prev' will be null:
                 if (@field(new_node, prev) == null) {
+                    assert(@field(list.first.?, prev) == new_node);
                     list.first = new_node;
                 }
             }
@@ -1320,9 +1521,14 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             ///     list1: the list to concatenate onto
             ///     list2: the list to be concatenated
             pub fn concatByMoving(list1: *List, list2: *List) void {
-                const l2_first = list2.first orelse return;
+                const l2_first = list2.first orelse {
+                    assert(list2.last == null);
+                    return;
+                };
                 if (list1.last) |l1_last| {
+                    assert(@field(l1_last, next) == null);
                     @field(l1_last, next) = list2.first;
+                    assert(@field(l2_first, prev) == null);
                     @field(l2_first, prev) = list1.last;
                 } else {
                     // list1 was empty
@@ -1336,25 +1542,29 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             /// Extract the range from `from` to `to` as a new linked list,
             /// healing the gap in the list thereby created.  Assumes that
             /// `from` and `to` are valid members of `list`, and that `to` may
-            /// be found in the `next` direction starting from `from`.  No
-            /// `prev` equivalent is provided, simply switch `from` and `to`.
-            /// It is valid for `from` to be `list.first`, or for `to` to be
-            /// `list.last`; `from` and `to` may not be identical.
+            /// be found in the `next` (aka forward) direction starting from
+            /// `from`.  No `prev` equivalent is provided, simply switch `from`
+            /// and `to`.  It is valid for `from` to be `list.first`, or for
+            /// `to` to be `list.last`; `from` and `to` may not be identical.
             pub fn extractRange(list: *List, from: *Node, to: *Node) List {
-                const from_prev = @field(from, link_field).unlinkPrev();
-                const to_next = @field(to, link_field).unlinkNext();
+                assert(from != to);
+                const from_prev = @field(from, link_field).unlinkBackward();
+                const to_next = @field(to, link_field).unlinkForward();
                 if (from_prev) |now_prev| {
                     if (to_next) |now_next| {
                         // These were both middle nodes
                         @field(now_prev, next) = now_next;
                         @field(now_next, prev) = now_prev;
                     } else {
-                        // `to` is assumed to be the last node,
+                        // `to` has to be the last node:
+                        assert(list.last == to);
                         // so now, now_prev is the last
                         list.last = now_prev;
                     }
                 } else {
-                    // `from` was the first.  We need to know if
+                    // `from` was the first:
+                    assert(from == list.first);
+                    // We need to know if
                     // `to` was the last so we can make the list empty.
                     if (to_next) |now_next| {
                         // It was not:
@@ -1368,7 +1578,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 return .{ .first = from, .last = to };
             }
 
-            /// Splices `list2` `next` to the parameter `node`.  When this
+            /// Splices `list2` forward of the parameter `node`.  When this
             /// function returns, `list2` will be empty.  This is valid to
             /// call when `node` is either the first or the last node on the
             /// receiver list, but if this is known to be the case, prefer
@@ -1383,7 +1593,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 list2.last = null;
             }
 
-            /// Splices `list2` `prev` to the parameter `node`.  When this
+            /// Splices `list2` backward of the parameter `node`.  When this
             /// function returns, `list2` will be empty.  This is valid to
             /// call when `node` is either the first or the last node on the
             /// receiver list, but if this is known to be the case, prefer
@@ -1398,53 +1608,56 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 list2.last = null;
             }
 
-            /// Insert a new node at the end of the list.
+            /// Insert a new node at the end of the list.  Asserts the node
+            /// is `.solo`.
             ///
             /// Arguments:
             ///     new_node: Pointer to the new node to insert.
             pub fn append(list: *List, new_node: *Node) void {
+                assert(@field(new_node, link_field).positionInList() == .solo);
                 if (list.last) |last| {
                     // Insert after last.
-                    list.insertAfter(last, new_node);
+                    list.emplaceForward(last, new_node);
                 } else {
                     // Empty list.
                     list.prepend(new_node);
                 }
             }
 
-            /// Insert a new node at the beginning of the list.
+            /// Insert a new node at the beginning of the list.  Asserts the
+            /// node is `.solo`.
             ///
             /// Arguments:
             ///     new_node: Pointer to the new node to insert.
             pub fn prepend(list: *List, new_node: *Node) void {
+                assert(@field(new_node, link_field).positionInList() == .solo);
                 if (list.first) |first| {
                     // Insert before first.
-                    list.insertBefore(first, new_node);
+                    list.emplaceBackward(first, new_node);
                 } else {
                     // Empty list.
                     list.first = new_node;
                     list.last = new_node;
-                    @field(new_node, prev) = null;
-                    @field(new_node, next) = null;
                 }
             }
 
             /// Remove a node from the list.  Assumes this node belongs to
-            /// this list.
+            /// this list.  O(1).
             ///
             /// Arguments:
             ///     node: Pointer to the node to be removed.
             pub fn remove(list: *List, node: *Node) void {
                 switch (@field(node, link_field).positionInList()) {
                     .first => {
-                        list.first = @field(node, link_field).unlinkNext();
+                        list.first = @field(node, link_field).unlinkForward();
                     },
                     .last => {
-                        list.last = @field(node, link_field).unlinkPrev();
+                        list.last = @field(node, link_field).unlinkBackward();
                     },
                     .middle => @field(node, link_field).removeSelfFromList(),
                     .solo => {},
                 }
+                assert(@field(node, link_field).positionInList() == .solo);
             }
 
             /// Remove and return the last node in the list.
@@ -1478,13 +1691,409 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 return count;
             }
 
-            /// Answers whether the list is empty.
-            pub inline fn isEmpty(list: List) bool {
-                return list.first == null and list.last == null;
+            /// Answer whether the list is empty.
+            pub fn isEmpty(list: List) bool {
+                if (list.first == null) {
+                    assert(list.last == null);
+                    return true;
+                }
+                assert(list.last != null);
+                return false;
+            }
+
+            /// Answer whether the list is 'well-formed': null at
+            /// both ends, properly interlinked, and acyclic.  Useful
+            /// in diagnosis and testing.  Since this detects and breaks
+            /// cycles, it does not respect the iteration limit.
+            pub fn isWellFormed(list: List) bool {
+                if (list.first == null or list.last == null) return false;
+                if (list.first == list.last) return true;
+                // Since we know first is bounded, any forward-cycle will
+                // eventually fail the back-link test, and we can't be in a
+                // proper cycle because we start from first.
+                var m_node = list.first;
+                while (@field(m_node.?, next)) |next_node| {
+                    if (@field(next_node, prev) != m_node) return false;
+                    m_node = next_node;
+                }
+                return m_node == list.last;
+            }
+
+            inline fn mustBeBounded(list: List) void {
+                if (list.first) |first| {
+                    assert(@field(first, prev) == null);
+                    if (list.last) |last| {
+                        assert(@field(last, next) == null);
+                    } else {
+                        assert(false);
+                    }
+                } else {
+                    assert(list.last == null);
+                }
+            }
+
+            /// Adjust one, or the other, of the ends of the list, backward or
+            /// forward by precisely one link, then assert that the list is
+            /// properly bounded.  This is deliberately strict, it repairs one
+            /// (1) weird thing done to a list if called immediately after the
+            /// weird thing.  Users of the List API should have no need to call
+            /// this function.
+            pub fn adjustEnds(list: *List) void {
+                if (@field(list.first.?, prev) != null) {
+                    list.first = @field(list.first.?, prev);
+                    mustBeBounded(list);
+                } else if (@field(list.last.?, next) != null) {
+                    list.last = @field(list.last.?, next);
+                    mustBeBounded(list);
+                }
+            }
+
+            /// Sort the list in-place into ascending order.
+            pub fn sortAscending(list: *List) void {
+                if (list.first == null) return;
+                list.first, list.last = mergeSortFn(lessThan)(list.first.?);
+            }
+
+            /// Sort the list in-place into descending order.
+            pub fn sortDescending(list: *List) void {
+                if (list.first == null) return;
+                list.first, list.last = mergeSortFn(greaterThan)(list.first.?);
+            }
+
+            /// Search forward from the first node on the list, placing the argument
+            /// node where it belongs if the list were to be in ascending order.
+            pub fn insertAscendingForward(list: *List, node: *Node) void {
+                if (list.first == null) {
+                    assert(list.last == null);
+                    list.prepend(node);
+                    return;
+                }
+                mustBeBounded(list);
+                insertSortFn(lessThanEq, next)(list.first.?);
+                adjustEnds(list);
+            }
+
+            /// Search backward from the last node on the list, placing the argument
+            /// node where it belongs if the list were to be in ascending order.
+            pub fn insertAscendingBackward(list: *List, node: *Node) void {
+                if (list.first == null) {
+                    assert(list.last == null);
+                    list.prepend(node);
+                    return;
+                }
+                mustBeBounded(list);
+                insertSortFn(lessThanEq, prev)(list.last.?);
+                adjustEnds(list);
+            }
+
+            /// Search forward from the first node on the list, placing the argument
+            /// node where it belongs if the list were to be in descending order.
+            pub fn insertDescendingForward(list: *List, node: *Node) void {
+                if (list.first == null) {
+                    assert(list.last == null);
+                    list.prepend(node);
+                    return;
+                }
+                mustBeBounded(list);
+                insertSortFn(greaterThanEq, next)(list.first.?);
+                adjustEnds(list);
+            }
+
+            /// Search backward from the last node on the list, placing the argument
+            /// node where it belongs if the list were to be in descending order.
+            pub fn insertDescendingBackward(list: *List, node: *Node) void {
+                if (list.first == null) {
+                    assert(list.last == null);
+                    list.prepend(node);
+                    return;
+                }
+                mustBeBounded(list);
+                insertSortFn(greaterThanEq, prev)(list.last.?);
+                adjustEnds(list);
+            }
+
+            /// Answer if the list is sorted in ascending order.  Perhaps surprisingly,
+            /// an empty list will answer `true`.
+            pub fn isOrderedAscending(list: *List) bool {
+                if (list.first == null) return true;
+                return inOrderFn(lessThanEq)(list.first.?);
+            }
+
+            /// Answer if the list is sorted in descending order.  Perhaps surprisingly,
+            /// an empty list will answer `true`.
+            pub fn isOrderedDescending(list: *List) bool {
+                if (list.first == null) return true;
+                return inOrderFn(greaterThanEq)(list.first.?);
             }
         };
+
+        //| Ordering Impl
+
+        inline fn orderGuard() void {
+            if (!has_order)
+                @compileError(
+                    \\This mixin was not configured with an order function, and
+                    \\cannot be sorted without one.  Zelda will find a public
+                    \\declaration `zeldaOrderFn`, expecting the signature
+                    \\
+                    \\    fn(*const Node, *const Node) callconv(.@"inline") zelda.Order;
+                    \\
+                    \\Although the calling convention and specific enum are never checked, this
+                    \\will allow the optimizer to generate the best code in the most cases.
+                    \\
+                    \\When configuring the mixin manually, provide the name of the declaration as
+                    \\a string for the last argument, rather than `null`.
+                );
+        }
+
+        inline fn lessThan(n1: *const Node, n2: *const Node) bool {
+            return @field(Node, order_name)(n1, n2) == .lt;
+        }
+
+        inline fn lessThanEq(n1: *const Node, n2: *const Node) bool {
+            return @field(Node, order_name)(n1, n2) != .gt;
+        }
+
+        inline fn greaterThan(n1: *const Node, n2: *const Node) bool {
+            return @field(Node, order_name)(n1, n2) == .gt;
+        }
+
+        inline fn greaterThanEq(n1: *const Node, n2: *const Node) bool {
+            return @field(Node, order_name)(n1, n2) != .lt;
+        }
+
+        fn insertSortFn(
+            orderFn: fn (*Node, *Node) callconv(.@"inline") bool,
+            comptime direction: []const u8,
+        ) fn (*Node, *Node) *Node {
+            return struct {
+                pub fn insert(head: *Node, node: *Node) void {
+                    orderGuard();
+                    const is_next = std.mem.eql(u8, direction, next);
+                    if (orderFn(node, head)) {
+                        if (is_next)
+                            @field(head, link_field).insertBefore(node)
+                        else
+                            @field(head, link_field).insertAfter(node);
+                        return;
+                    }
+                    var m_next = @field(head, direction);
+                    var last = head;
+                    var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                    while (m_next) |next_node| {
+                        if (has_limit) limit += 1;
+                        if (orderFn(node, next_node)) {
+                            if (is_next)
+                                @field(next_node, link_field).insertBefore(node)
+                            else
+                                @field(next_node, link_field).insertAfter(node);
+                            return;
+                        }
+                        last = next_node;
+                        m_next = @field(next_node, direction);
+                        if (has_limit) if (limit >= seek_limit) @panic("insertSorted exceeded seek limit");
+                    }
+                    if (is_next)
+                        @field(head, link_field).insertAfter(node)
+                    else
+                        @field(head, link_field).insertBefore(node);
+                    return;
+                }
+            }.insert;
+        }
+
+        fn mergeSortFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node) struct { *Node, *Node } {
+            return struct {
+                pub fn msort(n: *Node) struct { *Node, *Node } {
+                    orderGuard();
+                    var ep: ?*Node = null;
+                    var set: [LISTSIZE]?*Node = .{null} ** LISTSIZE;
+                    var m_list: ?*Node = n;
+                    var first = true;
+                    while (m_list) |list| {
+                        ep = list;
+                        // First, "gallop" past any already-sorted values,
+                        // this brings the merge down to O(n) for an already-
+                        // sorted list.
+                        var m_gallop: ?*Node = list;
+                        var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                        while (m_gallop) |gallop| {
+                            if (has_limit) limit += 1;
+                            if (@field(gallop, next)) |g_next| {
+                                if (orderFn(gallop, g_next)) {
+                                    m_gallop = g_next;
+                                } else {
+                                    m_list = g_next;
+                                    @field(gallop, next) = null;
+                                    break;
+                                }
+                            } else {
+                                if (first) {
+                                    // sorted!
+                                    return .{ n, gallop };
+                                }
+                                m_list = null;
+                                break;
+                            }
+                            if (has_limit) if (limit >= seek_limit) @panic("mergeSort exceeded seek limit");
+                        }
+                        first = false;
+                        var i: usize = 0;
+                        while (i < LISTSIZE - 1 and set[i] != null) : (i += 1) {
+                            ep = merge(set[i], ep);
+                            set[i] = null;
+                        }
+                        set[i] = merge(set[i], ep);
+                    }
+                    ep = null;
+                    // Compress the fragments.  We could just count them but
+                    // it takes the same amount of time.
+                    var off: usize = 0;
+                    for (0..LISTSIZE) |i| {
+                        if (set[i]) |_| {
+                            set[i - off] = set[i];
+                        } else {
+                            off += 1;
+                        }
+                    } // The amount remaining is just:
+                    var amt = LISTSIZE - off;
+                    assert(amt > 0);
+                    var i: usize = 0;
+                    while (amt > 1) {
+                        ep = merge(set[i].?, ep);
+                        i += 1;
+                        amt -= 1;
+                    }
+                    // Ep might be null here, if we only have one list,
+                    // but that's ok:
+                    return mergeFinal(set[i], ep);
+                }
+
+                // Merge two linked lists, given the head. Either the first or the
+                // second may be null: by construction, they will never both be
+                // null, but it's harmless to our purposes to return a `?*T`, so
+                // we wouldn't benefit from that fact and don't take advantage of it.
+                fn merge(maybe_a: ?*Node, maybe_b: ?*Node) ?*Node {
+                    if (maybe_a == null) return maybe_b;
+                    if (maybe_b == null) return maybe_a;
+                    var a: ?*Node = maybe_a;
+                    var b: ?*Node = maybe_b;
+                    const head: *Node = if (orderFn(a.?, b.?)) head: {
+                        const h = a.?;
+                        a = @field(h, next);
+                        break :head h;
+                    } else head: {
+                        const h = b.?;
+                        b = @field(h, next);
+                        break :head h;
+                    };
+                    var ptr: *Node = head;
+                    while (a != null and b != null) {
+                        const a_ptr = a.?;
+                        const b_ptr = b.?;
+                        if (orderFn(a_ptr, b_ptr)) {
+                            @field(ptr, next) = a_ptr;
+                            ptr = a_ptr;
+                            a = @field(a_ptr, next);
+                        } else {
+                            @field(ptr, next) = b_ptr;
+                            ptr = b_ptr;
+                            b = @field(b_ptr, next);
+                        }
+                    }
+                    if (a) |a_ptr| {
+                        @field(ptr, next) = a_ptr;
+                    } else {
+                        @field(ptr, next) = b;
+                    }
+                    return head;
+                }
+
+                // Final merge: "a" is never null, but we need a variable anyway, so it's
+                // convenient to cast here.  This time we retain or find the tail and
+                // return it as well, while fixing up all backlinks.
+                fn mergeFinal(maybe_a: ?*Node, maybe_b: ?*Node) struct { *Node, *Node } {
+                    assert(maybe_a != null);
+                    if (maybe_b == null) {
+                        var m_ptr = maybe_a;
+                        @field(m_ptr.?, prev) = null;
+                        while (@field(m_ptr.?, next)) |n| {
+                            @field(n, prev) = m_ptr;
+                            m_ptr = n;
+                        }
+                        return .{ maybe_a.?, m_ptr.? };
+                    }
+                    var a: ?*Node = maybe_a;
+                    var b: ?*Node = maybe_b;
+                    const head: *Node = if (orderFn(a.?, b.?)) head: {
+                        const h = a.?;
+                        a = @field(h, next);
+                        break :head h;
+                    } else head: {
+                        const h = b.?;
+                        b = @field(h, next);
+                        break :head h;
+                    };
+                    @field(head, prev) = null;
+                    var ptr: *Node = head;
+                    while (a != null and b != null) {
+                        const a_ptr = a.?;
+                        const b_ptr = b.?;
+                        if (orderFn(a_ptr, b_ptr)) {
+                            @field(ptr, next) = a_ptr;
+                            @field(a_ptr, prev) = ptr;
+                            ptr = a_ptr;
+                            a = @field(a_ptr, next);
+                        } else {
+                            @field(ptr, next) = b_ptr;
+                            @field(b_ptr, prev) = ptr;
+                            ptr = b_ptr;
+                            b = @field(b_ptr, next);
+                        }
+                    }
+                    // We advance one list at a time, so one of these must
+                    // exist (and the other does not, per the exit condition
+                    // of the while loop):
+                    var tail_ptr: ?*Node =
+                        if (a) |a_ptr| a_ptr else if (b) |b_ptr| b_ptr else unreachable;
+                    @field(ptr, next) = tail_ptr;
+                    @field(tail_ptr.?, prev) = ptr;
+
+                    while (@field(tail_ptr.?, next)) |n| {
+                        @field(n, prev) = tail_ptr;
+                        tail_ptr = n;
+                    }
+                    return .{ head, tail_ptr.? };
+                }
+            }.msort;
+        }
+
+        fn inOrderFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node) bool {
+            return struct {
+                pub fn inorder(head: *Node) bool {
+                    orderGuard();
+                    var this: *Node = head;
+                    var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                    while (@field(this, next)) |next_node| {
+                        if (has_limit) limit += 1;
+                        if (orderFn(this, next_node)) {
+                            this = next_node;
+                        } else {
+                            return false;
+                        }
+                        if (has_limit) if (limit >= seek_limit) @panic("inOrder exceeded seek limit");
+                    } else {
+                        return true;
+                    }
+                }
+            }.inorder;
+        }
     };
 }
+
+/// The size of the array used to hold node pointers
+/// during merge sorts.
+const LISTSIZE = 32;
 
 // Tests
 
@@ -1575,7 +2184,7 @@ const Sorted = struct {
 
     pub const empty: S = .{ .val = undefined };
 
-    pub const ZELDA_SEEK_LIMIT = 512;
+    pub const ZELDA_SEEK_LIMIT = if (false) null else 512;
 
     pub const S = @This();
     pub const Link = aLinkToThePast(S);
@@ -1635,7 +2244,7 @@ test "Sorted singly-linked list" {
         const rsorted = one.mixer.sortDescending();
         try expect(rsorted.mixer.isOrderedDescending());
         const still_rsorted = rsorted.mixer.insertOrderedDescending(&five);
-        try expectEqual(9, rsorted.mixer.countChildren() + 1);
+        try expectEqual(9, rsorted.mixer.len());
         try expectEqual(rsorted, still_rsorted);
         try expect(still_rsorted.mixer.isOrderedDescending());
         const resorted = rsorted.mixer.reverse();
@@ -1649,14 +2258,12 @@ test "Sorted singly-linked list" {
 
 test "more sorts" {
     var sorts: [512]Sorted = .{Sorted.empty} ** 512;
+    var seed: u64 = undefined;
     var prng = std.Random.DefaultPrng.init(rand: {
-        var seed: u64 = undefined;
-        std.posix.getrandom(std.mem.asBytes(&seed)) catch {
-            std.debug.print("Failed randomness call, skipping test (weird)\n", .{});
-            return;
-        };
+        try std.posix.getrandom(std.mem.asBytes(&seed));
         break :rand seed;
     });
+    errdefer std.debug.print("Seed on fail: 0x{x}", .{seed});
     for (0..512) |i| {
         sorts[i].val = prng.random().int(u32);
         if (i < 511) {
@@ -1713,10 +2320,18 @@ test "more sorts" {
         half_list.sortDescending();
         try expect(half_list.first.?.mixer.isOrderedDescending());
         try expect(half_list.isOrderedDescending());
+        try expect(!half_list.isOrderedAscending());
         half_list.sortAscending();
         try expect(half_list.first.?.mixer.isOrderedAscending());
         try expect(half_list.isOrderedAscending());
         try expectEqual(512, half_list.len());
+        const remove_at = prng.random().intRangeLessThan(u32, 0, 512);
+        half_list.remove(&sorts[remove_at]);
+        sorts[remove_at].val = std.math.maxInt(u32);
+        try expectEqual(511, half_list.first.?.mixer.len());
+        half_list.insertOrderedAscending(&sorts[remove_at]);
+        try expect(half_list.isOrderedAscending());
+        try expectEqual(512, half_list.first.?.mixer.len());
     }
 }
 
@@ -1743,8 +2358,8 @@ test "A Link Between Worlds" {
     list.append(&two); // {2}
     list.append(&five); // {2, 5}
     list.prepend(&one); // {1, 2, 5}
-    list.insertBefore(&five, &four); // {1, 2, 4, 5}
-    list.insertAfter(&two, &three); // {1, 2, 3, 4, 5}
+    list.emplaceBackward(&five, &four); // {1, 2, 4, 5}
+    list.emplaceForward(&two, &three); // {1, 2, 3, 4, 5}
 
     try testing.expect(list.first != null);
     try testing.expect(list.last != null);
@@ -1971,16 +2586,16 @@ test "cycles" {
     var bob: Kid = .{};
     var charlie: Kid = .{};
     var dan: Kid = .{};
-    alice.the_link.insertAfter(&bob);
+    alice.the_link.emplaceForward(&bob);
     try testing.expectEqual(&bob, alice.next.?);
     try testing.expectEqual(null, alice.prev);
 
-    bob.the_link.insertAfter(&charlie);
+    bob.the_link.emplaceForward(&charlie);
     try testing.expectEqual(&charlie, bob.next.?);
     try testing.expectEqual(null, alice.prev);
     try testing.expectEqual(&bob, alice.next.?);
 
-    charlie.the_link.insertAfter(&alice);
+    charlie.the_link.emplaceForward(&alice);
     try testing.expectEqual(&alice, charlie.next.?);
     try testing.expectEqual(&bob, charlie.prev.?);
     try testing.expectEqual(&charlie, alice.prev.?);
@@ -2003,9 +2618,9 @@ test "cycles" {
     var ethel: Kid = .{};
     var frank: Kid = .{};
     var glen: Kid = .{};
-    glen.the_link.insertBefore(&frank);
-    frank.the_link.insertBefore(&ethel);
-    ethel.the_link.insertBefore(&glen);
+    glen.the_link.emplaceBackward(&frank);
+    frank.the_link.emplaceBackward(&ethel);
+    ethel.the_link.emplaceBackward(&glen);
 
     try testing.expect(ethel.the_link.inCycleBackward());
     try testing.expect(ethel.the_link.inCycleForward());
@@ -2013,6 +2628,107 @@ test "cycles" {
     try testing.expect(frank.the_link.inCycleForward());
     try testing.expect(glen.the_link.inCycleBackward());
     try testing.expect(glen.the_link.inCycleForward());
+}
+
+const Card = struct {
+    face: FaceKind,
+    suit: SuitKind,
+    link: Link = .{},
+    over: ?*Card = null,
+    under: ?*Card = null,
+    suitlink: SuitLink = .{},
+
+    pub const FaceKind = enum(i8) {
+        ace,
+        two,
+        three,
+        four,
+        five,
+        six,
+        seven,
+        eight,
+        nine,
+        ten,
+        jack,
+        king,
+        queen,
+    };
+
+    pub const SuitKind = enum(i8) {
+        club,
+        diamond,
+        heart,
+        spade,
+    };
+
+    pub const ZELDA_SEEK_LIMIT = 4097;
+
+    pub const trump: Card = .{ .suit = .spade, .face = .ace };
+
+    pub const Link = aLinkBetweenWorlds(Card);
+    pub const SuitLink = doublyLinkedList(Card, .over, .under, "suitRank");
+
+    pub inline fn zeldaOrderFn(c1: *const Card, c2: *const Card) Order {
+        const diff = @intFromEnum(c1.face) - @intFromEnum(c2.face);
+        if (diff < 0)
+            return .lt
+        else if (diff == 0)
+            return .eq
+        else
+            return .gt;
+    }
+
+    pub inline fn suitRank(c1: *const Card, c2: *const Card) Order {
+        const diff = @intFromEnum(c1.suit) - @intFromEnum(c2.suit);
+        if (diff < 0)
+            return .lt
+        else if (diff == 0)
+            return .eq
+        else
+            return .gt;
+    }
+};
+
+fn cardTricks(comptime count: comptime_int) !void {
+    var deck: [count]Card = .{Card.trump} ** count;
+    var seed: u64 = undefined;
+    var prng = std.Random.DefaultPrng.init(rand: {
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :rand seed;
+    });
+    errdefer std.debug.print("Seed on fail: 0x{x}\n", .{seed});
+    for (0..count) |i| {
+        deck[i].suit = prng.random().enumValue(Card.SuitKind);
+        deck[i].face = prng.random().enumValue(Card.FaceKind);
+        if (count - i == 1) break;
+        deck[i].link.emplaceForward(&deck[i + 1]);
+    }
+    {
+        var facesort = deck[prng.random().uintLessThan(usize, count)].link.toList();
+        facesort.sortAscending();
+        try expect(facesort.isWellFormed());
+        try expect(facesort.isOrderedAscending());
+        try expectEqual(count, facesort.len());
+        facesort.sortDescending();
+        try expect(facesort.isWellFormed());
+        try expect(facesort.isOrderedDescending());
+        try expectEqual(count, facesort.len());
+    }
+    {
+        var suitsort = deck[prng.random().uintLessThan(usize, count)].suitlink.toList();
+        suitsort.sortAscending();
+        try expect(suitsort.isWellFormed());
+        try expect(suitsort.isOrderedAscending());
+        try expectEqual(count, suitsort.len());
+        suitsort.sortDescending();
+        try expect(suitsort.isWellFormed());
+        try expect(suitsort.isOrderedDescending());
+        try expectEqual(count, suitsort.len());
+    }
+}
+
+test cardTricks {
+    try cardTricks(52);
 }
 
 const std = @import("std");
