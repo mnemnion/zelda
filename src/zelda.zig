@@ -1135,6 +1135,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// can strand memory and lead to a leak.  Prefer to use the function
         /// `remove` on the `List` type.  If `node.positionInList() == .middle`,
         /// this will not strand either end of a properly-constituted list.
+        /// See also `removeSelfReturnEnd`.
         pub fn removeSelfFromList(link: *Link) void {
             const node = base(link);
             if (@field(node, prev)) |prev_node| {
@@ -1333,6 +1334,8 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             return m_node.?;
         }
 
+        //| Queries and diagnostics
+
         //| NOTE: The following four functions deliberately do not include the
         //| iteration limit.  Two reasons: they contain logic which will break
         //| out of cycles, and they are strictly diagnostic, having no place in
@@ -1437,7 +1440,8 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         //| For doubly-linked lists it is utterly pointless to have one,
         //| have it be sorted, and not retain the tail.  So the nodes
         //| have only two functions which sort and return a List, the
-        //| remainder of the (numerous!)
+        //| remainder of the (numerous!) operartions made available are
+        //| found on List itself.
 
         /// Sort (forward) in ascending order.  Asserts that the backward
         /// link is `null`.  Because the merge sort rebuilds the backlinks at
@@ -1462,6 +1466,300 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             list.first, list.last = mergeSortFn(greaterThan)(node);
             return list;
         }
+
+        //| Matching
+
+        /// The match interface.  Expects a function which answers whether
+        /// any node is a match, and a context pointer which is the first
+        /// argument to that function.  Provides finding, filter, and a
+        /// find iterator.
+        ///
+        /// As a tip: the context pointer can be data, not just an address, for
+        /// this application that can be rather useful: an enum, a threshold,
+        /// many ranges.
+        pub const Matcher = struct {
+            ctx: *anyopaque,
+            match: *const fn (*anyopaque, *Node) bool,
+
+            /// Find the first match, returning it if found.  The node is not
+            /// removed from the list.
+            pub fn findFirst(m: *Matcher, list: *List) ?*Node {
+                var m_node: ?*Node = list.first;
+                var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                while (m_node) |node| : (m_node = @field(node, next)) {
+                    if (has_limit) limit += 1;
+                    if (m.match(m.ctx, node)) return node;
+                    if (has_limit) if (limit >= seek_limit) @panic("findFirst exceeded seek limit");
+                } else return null;
+            }
+
+            /// Find the last match, returning it if found.  The node is not
+            /// removed from the list.
+            pub fn findLast(m: *Matcher, list: *List) ?*Node {
+                var m_node: ?*Node = list.last;
+                var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                while (m_node) |node| : (m_node = @field(node, prev)) {
+                    if (has_limit) limit += 1;
+                    if (m.match(m.ctx, node)) return node;
+                    if (has_limit) if (limit >= seek_limit) @panic("findLast exceeded seek limit");
+                } else return null;
+            }
+
+            /// Find the first match, remove it from the list if found, and
+            /// return it.
+            pub fn findRemoveFirst(m: *Matcher, list: *List) ?*Node {
+                var m_node: ?*Node = list.first;
+                var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                while (m_node) |node| : (m_node = @field(node, next)) {
+                    if (has_limit) limit += 1;
+                    if (m.match(m.ctx, node)) {
+                        return list.popNode(node);
+                    }
+                    if (has_limit) if (limit >= seek_limit) @panic("findRemoveFirst exceeded seek limit");
+                } else return null;
+            }
+
+            /// Find the last match, remove it from the list if found, and
+            /// return it.
+            pub fn findRemoveLast(m: *Matcher, list: *List) ?*Node {
+                var m_node: ?*Node = list.last;
+                var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                while (m_node) |node| : (m_node = @field(node, prev)) {
+                    if (has_limit) limit += 1;
+                    if (m.match(m.ctx, node)) {
+                        return list.popNode(node);
+                    }
+                    if (has_limit) if (limit >= seek_limit) @panic("findRemoveLast exceeded seek limit");
+                } else return null;
+            }
+
+            /// Find the first 'run': the first match and every match which directly
+            /// follows it.  Return the head and tail of the run, which may be the
+            /// same node.  Note that this is not a list!  It may be removed with
+            /// `list.extractRange`, if desired.
+            pub fn findFirstRun(m: *Matcher, list: *List) ?struct { *Node, *Node } {
+                var m_node: ?*Node = list.first;
+                var m_first: ?*Node = null;
+                var m_last: ?*Node = null;
+                while (m_node) |node| : (m_node = @field(node, next)) {
+                    if (m.match(m.ctx, node)) {
+                        if (m_first) |_| {
+                            m_last = node;
+                        } else {
+                            m_first = node;
+                        }
+                    } else if (m_first) |first| {
+                        return .{ first, m_last orelse first };
+                    }
+                } else return null;
+            }
+
+            /// Find the last 'run': the last match and every match which
+            /// directly precedes it.  Return the head and tail of the run,
+            /// which may be the same node.  Note that this is not a list!  It
+            /// will, however, be in 'list order', not the order in which they
+            /// are found.  It may be removed with `list.extractRange`, if
+            /// desired; this is one of the reasons why the head (last found) is
+            /// the first element of the struct.
+            pub fn findLastRun(m: *Matcher, list: *List) ?struct { *Node, *Node } {
+                var m_node: ?*Node = list.last;
+                var m_first: ?*Node = null;
+                var m_last: ?*Node = null;
+                while (m_node) |node| : (m_node = @field(node, prev)) {
+                    if (m.match(m.ctx, node)) {
+                        if (m_first) |_| {
+                            m_last = node;
+                        } else {
+                            m_first = node;
+                        }
+                    } else if (m_first) |first| {
+                        return .{ m_last orelse first, first };
+                    }
+                } else return null;
+            }
+
+            /// Find the next (forward) match after the provided Node.
+            /// There is no remove variant of this function.
+            pub fn findNext(m: *Matcher, node: *Node) ?*Node {
+                // Cheating is ok when you make the rules.
+                var list: List = .empty;
+                list.first = @field(node, next);
+                return m.findFirst(list);
+            }
+
+            /// Find the previous (backward) match before the provided Node.
+            /// There is no remove variant of this function.
+            pub fn findPrev(m: *Matcher, node: *Node) ?*Node {
+                var list: List = .empty;
+                list.last = @field(node, prev);
+                return m.findLast(list);
+            }
+
+            /// Find the next (forward) run after the provided Node.
+            /// See `findNextRun` for details.  Iterative use should pass
+            /// in `run.@"1"`.
+            pub fn findNextRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
+                // Cheating is ok when you make the rules.
+                var list: List = .empty;
+                list.first = @field(node, next);
+                return m.findFirstRun(list);
+            }
+
+            /// Find the previous (backward) run before the provided Node.
+            /// See `findPrevRun` for details.  Iterative use should pass
+            /// in `run.@"0"`.
+            pub fn findPrevRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
+                var list: List = .empty;
+                list.last = @field(node, prev);
+                return m.findLastRun(list);
+            }
+
+            /// Filter the list forward.  All matches are removed and emplaced
+            /// on a new list, which is returned.  Either list may be empty
+            /// after this operation completes.
+            pub fn filterForward(m: *Matcher, list: *List) List {
+                var flist: List = .empty;
+                var m_node: ?*Node = list.first;
+                var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                while (m_node) |node| {
+                    if (has_limit) limit += 1;
+                    const m_next = @field(node, next);
+                    if (m.match(m.ctx, node)) {
+                        flist.append(list.popNode(node));
+                    }
+                    m_node = m_next;
+                    if (has_limit) if (limit >= seek_limit) @panic("filterForward exceeded seek limit");
+                }
+                return flist;
+            }
+
+            /// Filter the list backward.  All matches are removed and emplaced
+            /// on a new list, which is returned.  Any matches will be in the
+            /// opposite order from their order on the original list.  Either
+            /// list may be empty after this operation completes.
+            pub fn filterBackward(m: *Matcher, list: *List) List {
+                var flist: List = .empty;
+                var m_node: ?*Node = list.last;
+                var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                while (m_node) |node| {
+                    if (has_limit) limit += 1;
+                    const m_next = @field(node, prev);
+                    if (m.match(m.ctx, node)) {
+                        flist.append(list.popNode(node));
+                    }
+                    m_node = m_next;
+                    if (has_limit) if (limit >= seek_limit) @panic("filterBackward exceeded seek limit");
+                }
+                return flist;
+            }
+
+            /// Return a finder, which will iterate over the list in either
+            /// direction, returning what it finds.  Mutating the list directly
+            /// while using a Finder can have confusing results, so let the
+            /// Finder do any popping you might need.  Important note: the
+            /// Finder _will not_ return results until an end is specified with
+            /// `finder.fromFirst` or `finder.fromLast`.  This can be confused
+            /// with no matches, feel free to use the convenience functions
+            /// `forwardFinder` and `backwardFinder`.
+            pub fn finder(m: *Matcher, list: *List) Finder {
+                return .{ .m = m, .list = list };
+            }
+
+            /// Return a Finder set to the start of the list.  Despite the
+            /// name, this can search in either direction: it was chosen for
+            /// easier autocomplete.
+            pub fn forwardFinder(m: *Matcher, list: *List) Finder {
+                var the_finder = m.finder(list);
+                the_finder.fromFirst();
+                return the_finder;
+            }
+
+            /// Return a Finder set to the end of the list.  Despite the
+            /// name, this can search in either direction: it was chosen for
+            /// easier autocomplete.
+            pub fn backwardFinder(m: *Matcher, list: *List) Finder {
+                var the_finder = m.finder(list);
+                the_finder.fromLast();
+                return the_finder;
+            }
+
+            pub const Finder = struct {
+                this: ?*Node = null,
+                m: *Matcher,
+                fwd: bool = true,
+                list: *List,
+
+                /// Start iteration from the first node of the list.
+                pub fn fromFirst(f: *Finder) void {
+                    f.this = f.list.first;
+                    f.fwd = true;
+                }
+
+                /// Start iteration from the last node of the list.
+                pub fn fromLast(f: *Finder) void {
+                    f.this = f.list.last;
+                    f.fwd = false;
+                }
+
+                /// Return the next matching Node, advancing.  The Node is
+                /// not removed.
+                pub fn next(f: *Finder) ?*Node {
+                    f.fwd = true;
+                    if (f.this) |it| {
+                        f.this = f.m.findNext(it);
+                        return f.this;
+                    } else return null;
+                }
+
+                /// Return the previous matching node, advancing.  The Node is
+                /// not removed.
+                pub fn prev(f: *Finder) ?*Node {
+                    f.fwd = false;
+                    if (f.this) |it| {
+                        f.this = f.m.findPrev(it);
+                        return f.this;
+                    } else return null;
+                }
+
+                /// Return the next matching node, without advancing.  The Node is
+                /// not removed.
+                pub fn peekNext(f: *Finder) ?*Node {
+                    if (f.this) |it| {
+                        return f.m.findNext(it);
+                    }
+                }
+
+                /// Return the previous matching node, without advancing.  The Node is
+                /// not removed.
+                pub fn peekPrev(f: *Finder) ?*Node {
+                    if (f.this) |it| {
+                        return f.m.findPrev(it);
+                    }
+                }
+
+                /// Remove the node from the list.  Use this when iterating or you
+                /// will probably lose your place (the integrity of the list will
+                /// not be affected).
+                pub fn remove(f: *Finder, node: *Node) void {
+                    if (f.this == node) {
+                        if (f.fwd) {
+                            f.this = @field(f.this.?, Link.next);
+                        } else {
+                            f.this = @field(f.this.?, Link.prev);
+                        }
+                    }
+                    f.list.remove(node);
+                }
+
+                /// Remove the node from the list, and return it.  Use this
+                /// when iterating or you will probably lose your place (the
+                /// integrity of the list will not be affected).
+                pub fn pop(f: *Finder, node: *Node) *Node {
+                    f.remove(node);
+                    return node;
+                }
+            };
+        };
 
         /// A doubly-linked list of `*Node`, comprising the first and last
         /// elements of the list.  The API preserves the following properties:
@@ -1544,10 +1842,13 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             /// `from` and `to` are valid members of `list`, and that `to` may
             /// be found in the `next` (aka forward) direction starting from
             /// `from`.  No `prev` equivalent is provided, simply switch `from`
-            /// and `to`.  It is valid for `from` to be `list.first`, or for
-            /// `to` to be `list.last`; `from` and `to` may not be identical.
+            /// and `to`.  It is valid for `from` to be `list.first`, for
+            /// `to` to be `list.last`, or for `to` and `from` to be identical.
             pub fn extractRange(list: *List, from: *Node, to: *Node) List {
-                assert(from != to);
+                if (from == to) {
+                    list.remove(from);
+                    return .{ .first = from, .last = to };
+                }
                 const from_prev = @field(from, link_field).unlinkBackward();
                 const to_next = @field(to, link_field).unlinkForward();
                 if (from_prev) |now_prev| {
@@ -1678,6 +1979,13 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 const first = list.first orelse return null;
                 list.remove(first);
                 return first;
+            }
+
+            /// Remove a node from the list, returning that same node.
+            /// This is just `remove` in the functional style.
+            pub fn popNode(list: *List, node: *Node) *Node {
+                list.remove(node);
+                return node;
             }
 
             /// Iterate over all nodes, returning the count.
