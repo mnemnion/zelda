@@ -1478,12 +1478,12 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// this application that can be rather useful: an enum, a threshold,
         /// many ranges.
         pub const Matcher = struct {
-            ctx: *anyopaque,
-            match: *const fn (*anyopaque, *Node) bool,
+            ctx: ?*anyopaque,
+            match: *const fn (?*anyopaque, *Node) bool,
 
             /// Find the first match, returning it if found.  The node is not
             /// removed from the list.
-            pub fn findFirst(m: *Matcher, list: *List) ?*Node {
+            pub fn firstMatch(m: *Matcher, list: *List) ?*Node {
                 var m_node: ?*Node = list.first;
                 var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
                 while (m_node) |node| : (m_node = @field(node, next)) {
@@ -1495,7 +1495,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
 
             /// Find the last match, returning it if found.  The node is not
             /// removed from the list.
-            pub fn findLast(m: *Matcher, list: *List) ?*Node {
+            pub fn lastMatch(m: *Matcher, list: *List) ?*Node {
                 var m_node: ?*Node = list.last;
                 var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
                 while (m_node) |node| : (m_node = @field(node, prev)) {
@@ -1507,7 +1507,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
 
             /// Find the first match, remove it from the list if found, and
             /// return it.
-            pub fn findRemoveFirst(m: *Matcher, list: *List) ?*Node {
+            pub fn removeFirstMatch(m: *Matcher, list: *List) ?*Node {
                 var m_node: ?*Node = list.first;
                 var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
                 while (m_node) |node| : (m_node = @field(node, next)) {
@@ -1521,7 +1521,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
 
             /// Find the last match, remove it from the list if found, and
             /// return it.
-            pub fn findRemoveLast(m: *Matcher, list: *List) ?*Node {
+            pub fn removeLastMatch(m: *Matcher, list: *List) ?*Node {
                 var m_node: ?*Node = list.last;
                 var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
                 while (m_node) |node| : (m_node = @field(node, prev)) {
@@ -1537,7 +1537,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             /// follows it.  Return the head and tail of the run, which may be the
             /// same node.  Note that this is not a list!  It may be removed with
             /// `list.extractRange`, if desired.
-            pub fn findFirstRun(m: *Matcher, list: *List) ?struct { *Node, *Node } {
+            pub fn firstRun(m: *Matcher, list: *List) ?struct { *Node, *Node } {
                 var m_node: ?*Node = list.first;
                 var m_first: ?*Node = null;
                 var m_last: ?*Node = null;
@@ -1561,7 +1561,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             /// are found.  It may be removed with `list.extractRange`, if
             /// desired; this is one of the reasons why the head (last found) is
             /// the first element of the struct.
-            pub fn findLastRun(m: *Matcher, list: *List) ?struct { *Node, *Node } {
+            pub fn lastRun(m: *Matcher, list: *List) ?struct { *Node, *Node } {
                 var m_node: ?*Node = list.last;
                 var m_first: ?*Node = null;
                 var m_last: ?*Node = null;
@@ -1580,39 +1580,43 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
 
             /// Find the next (forward) match after the provided Node.
             /// There is no remove variant of this function.
-            pub fn findNext(m: *Matcher, node: *Node) ?*Node {
+            pub fn nextMatch(m: *Matcher, node: *Node) ?*Node {
                 // Cheating is ok when you make the rules.
                 var list: List = .empty;
                 list.first = @field(node, next);
-                return m.findFirst(list);
+                return m.firstMatch(list);
             }
 
             /// Find the previous (backward) match before the provided Node.
             /// There is no remove variant of this function.
-            pub fn findPrev(m: *Matcher, node: *Node) ?*Node {
+            pub fn prevMatch(m: *Matcher, node: *Node) ?*Node {
                 var list: List = .empty;
                 list.last = @field(node, prev);
-                return m.findLast(list);
+                return m.lastMatch(list);
             }
 
             /// Find the next (forward) run after the provided Node.
-            /// See `findNextRun` for details.  Iterative use should pass
+            /// See `firstRun` for details.  Iterative use should pass
             /// in `run.@"1"`.
-            pub fn findNextRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
+            pub fn nextRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
                 // Cheating is ok when you make the rules.
                 var list: List = .empty;
                 list.first = @field(node, next);
-                return m.findFirstRun(list);
+                return m.firstRun(list);
             }
 
             /// Find the previous (backward) run before the provided Node.
-            /// See `findPrevRun` for details.  Iterative use should pass
+            /// See `lastRun` for details.  Iterative use should pass
             /// in `run.@"0"`.
-            pub fn findPrevRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
+            pub fn prevRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
                 var list: List = .empty;
                 list.last = @field(node, prev);
-                return m.findLastRun(list);
+                return m.lastRun(list);
             }
+
+            /// Filter the list in a forward direction.  Just a synonym for
+            /// `filterForward`, as this one is expected to be far more common.
+            pub const filter = filterForward;
 
             /// Filter the list forward.  All matches are removed and emplaced
             /// on a new list, which is returned.  Either list may be empty
@@ -1706,7 +1710,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 pub fn next(f: *Finder) ?*Node {
                     f.fwd = true;
                     if (f.this) |it| {
-                        f.this = f.m.findNext(it);
+                        f.this = f.m.nextMatch(it);
                         return f.this;
                     } else return null;
                 }
@@ -1716,7 +1720,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 pub fn prev(f: *Finder) ?*Node {
                     f.fwd = false;
                     if (f.this) |it| {
-                        f.this = f.m.findPrev(it);
+                        f.this = f.m.prevMatch(it);
                         return f.this;
                     } else return null;
                 }
@@ -1725,7 +1729,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 /// not removed.
                 pub fn peekNext(f: *Finder) ?*Node {
                     if (f.this) |it| {
-                        return f.m.findNext(it);
+                        return f.m.nextMatch(it);
                     }
                 }
 
@@ -1733,7 +1737,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 /// not removed.
                 pub fn peekPrev(f: *Finder) ?*Node {
                     if (f.this) |it| {
-                        return f.m.findPrev(it);
+                        return f.m.prevMatch(it);
                     }
                 }
 
@@ -1956,7 +1960,10 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                         list.last = @field(node, link_field).unlinkBackward();
                     },
                     .middle => @field(node, link_field).removeSelfFromList(),
-                    .solo => {},
+                    .solo => {
+                        list.first = null;
+                        list.last = null;
+                    },
                 }
                 assert(@field(node, link_field).positionInList() == .solo);
             }
@@ -2963,15 +2970,15 @@ const Card = struct {
     };
 
     pub const SuitKind = enum(i8) {
-        club,
-        diamond,
-        heart,
-        spade,
+        clubs,
+        diamonds,
+        hearts,
+        spades,
     };
 
     pub const ZELDA_SEEK_LIMIT = 4097;
 
-    pub const trump: Card = .{ .suit = .spade, .face = .ace };
+    pub const trump: Card = .{ .suit = .spades, .face = .ace };
 
     pub const Link = aLinkBetweenWorlds(Card);
     pub const SuitLink = doublyLinkedList(Card, .over, .under, "suitRank");
@@ -3033,10 +3040,65 @@ fn cardTricks(comptime count: comptime_int) !void {
         try expect(suitsort.isOrderedDescending());
         try expectEqual(count, suitsort.len());
     }
+    const match_lib = struct {
+        pub fn matchSuit(ctx: ?*anyopaque, card: *Card) bool {
+            const suit_val: usize = @intFromPtr(ctx);
+            const suit: Card.SuitKind = @enumFromInt(suit_val);
+            return card.suit == suit;
+        }
+
+        pub fn matchFace(ctx: ?*anyopaque, card: *Card) bool {
+            const face_val: isize = @intFromPtr(ctx);
+            const face: Card.FaceKind = @enumFromInt(face_val);
+            return card.face == face;
+        }
+
+        pub fn suitor(suit: Card.SuitKind) Card.Link.Matcher {
+            const suit_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(suit))));
+            return .{ .ctx = suit_ptr, .match = matchSuit };
+        }
+
+        pub fn facer(face: Card.FaceKind) Card.Link.Matcher {
+            const face_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(face))));
+            .{ .ctx = face_ptr, .match = matchSuit };
+        }
+    };
+    {
+        var sorted = deck[0].link.toList();
+        sorted.sortAscending();
+        try expect(sorted.isOrderedAscending());
+        var matcher = match_lib.suitor(.clubs);
+        var clubs = matcher.filter(&sorted);
+        try expectEqual(count, clubs.len() + sorted.len());
+        const empty = matcher.filter(&sorted);
+        try expectEqual(null, empty.first);
+        try expectEqual(null, empty.last);
+        matcher = match_lib.suitor(.diamonds);
+        var diamonds = matcher.filter(&sorted);
+        try expectEqual(count, diamonds.len() + clubs.len() + sorted.len());
+        matcher = match_lib.suitor(.hearts);
+        var hearts = matcher.filter(&sorted);
+        try expectEqual(count, hearts.len() + diamonds.len() + clubs.len() + sorted.len());
+        matcher = match_lib.suitor(.spades);
+        var spades = matcher.filter(&sorted);
+        try expectEqual(0, sorted.len());
+        try expectEqual(null, sorted.first);
+        try expectEqual(null, sorted.last);
+        try expectEqual(count, spades.len() + hearts.len() + diamonds.len() + clubs.len() + sorted.len());
+        var face = clubs.first.?.link.toList();
+        try expect(face.isOrderedAscending());
+        face = diamonds.first.?.link.toList();
+        try expect(face.isOrderedAscending());
+        face = hearts.first.?.link.toList();
+        try expect(face.isOrderedAscending());
+        face = spades.first.?.link.toList();
+        try expect(face.isOrderedAscending());
+    }
 }
 
 test cardTricks {
     try cardTricks(52);
+    try cardTricks(1023);
 }
 
 const std = @import("std");
