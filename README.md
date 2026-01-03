@@ -48,7 +48,7 @@ const Monster = struct {
     mana: u16,
     health: u16,
     // ...
-    next: ?*@This() = null, // Probably a good idea
+    next: ?*@This() = null,
     previous: ?*@This() = null,
     link: Link = .{}, // What's a Link?
 
@@ -82,6 +82,12 @@ yourself in a less than whimsical mood, these may be specified manually
 using `zelda.doublyLinkedList`.  Currently, any ordering function must
 be supplied as a string naming a public declaration, I may make it
 possible to provide this as a function at some later point.
+
+There is nothing stopping you from creating several of these exotic
+zero-width fields, to handle multiple pairs of links or, more likely,
+more than one sorting regimen.  You could even handle three link fields
+with two mixins, if you felt the urge to make your own life difficult in
+that way.
 
 Say you prefer, as indeed you might, a _singly_ linked list? We have
 that as well!
@@ -143,14 +149,15 @@ pick up on what all these lists have built in.
 
 A fairly recent modern doctrine emphasizes arrays over anything which
 uses a pointer.  Linked lists are often the target of this sort of
-critique, and it is indeed true that, in isolation, most of what one can
+critique, and it is indeed true that, in isolation, much of what one can
 do with a linked list will benchmark faster if something similar is done
 with an array instead.
 
 While an array may be faster, this does not make linked lists slow, and
 they are unmatched for flexibility.  They also give an often-useful
 property of _stability_, in that no operation on a list will ever lose
-a reference to an element of that list.
+a reference to an element of that list.  A direct reference, I mean.
+An indirect reference... that's a different story.
 
 I recently translated the Lemon parser [into Zig][zitron], and let me
 tell you, Lemon uses linked lists for absolutely everything.  It even,
@@ -179,13 +186,29 @@ a stdlib `SinglyLinkedList` which you can't do just with a node of a
 Zelda list, and plenty you can do which the stdlib doesn't.
 
 So why not provide a data structure which: supports `O(1)` prepend
-_and_ append, concatenation in `O(1)`, which can be `O(1)` loaded on a
+_and_ append, concatenation in `O(1)`, which can be `O(1)` loaded onto a
 freelist, and so on?  Why not indeed.  It costs you an extra pointer, I
 suppose.
 
 [zitron]: https://github.com/mnemnion/zitron/
 [^1]: I'm sure this is not actually true, the Internet being what it is.
 Fortunately they don't listen, and you shouldn't either!
+
+### Finding and Filtering
+
+Doubly-linked lists have a `Matcher` type, this is a type erased
+`?*anyopaque` paired with a pointer to a match function, which takes
+your node type and returns a `bool`.  By creating one of these your code
+gains access to a collection of finding and find-remove operations, the
+apotheosis of which is filter.
+
+Filter is a canonical example of what makes linked lists powerful.  In
+one pass, we separate what we want from the rest of what we have, with
+no need to allocate scrach space or move anything around.  Pretty nice.
+
+A later release is likely to extend this privilege to singly-linked
+lists as well, but I'm running out of time to spare on buffing linked
+lists.  For now.
 
 ### ZELDA_SEEK_LIMIT
 
@@ -206,10 +229,10 @@ _value_ `null`.
 
 ```sh
 ➜  rg -F --count-matches '@field' -- src/zelda.zig
-95
+264
 ```
 
-This number might fairly be expected to increase.
+Up from 95 in the last release.
 
 ### Alright! Let's Copypasta This Bad Boy!
 

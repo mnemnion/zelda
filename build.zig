@@ -12,6 +12,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const opts = b.addOptions();
+    opts.addOption(?u64, "seed", b.option(u64, "seed", "Provide a test seed for reproducing failures"));
+
     const test_filters = b.option(
         []const []const u8,
         "test-filter",
@@ -22,6 +25,7 @@ pub fn build(b: *std.Build) void {
         .root_module = zelda_module,
         .filters = test_filters,
     });
+    module_unit_tests.root_module.addOptions("options", opts);
 
     const run_module_unit_tests = b.addRunArtifact(module_unit_tests);
 
@@ -37,7 +41,7 @@ pub fn build(b: *std.Build) void {
     const run_kcov = b.addSystemCommand(&.{
         "kcov",
         "--clean",
-        "--exclude-line=unreachable,expect(false)",
+        "--exclude-line=unreachable,expect(false),panic(,no-coverage",
     });
     run_kcov.addPrefixedDirectoryArg("--include-pattern=", b.path("src"));
     const coverage_output = addOutputDirectoryArg(run_kcov, ".");

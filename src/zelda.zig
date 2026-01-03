@@ -262,10 +262,8 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         /// Return the linked list to which this node belongs, in O(n).  It is
         /// generally preferable to maintain the list _as_ a list, rather than
         /// call this function.
-        pub fn toList(link: *Link) List {
-            const node = base(link);
-            const last = link.findLast();
-            return .{ .first = node, .last = last };
+        pub fn asList(link: *Link) List {
+            return .{ .first = base(link), .last = link.findLast() };
         }
 
         /// Answer whether the node is found in the list.  Provided
@@ -617,7 +615,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                 if (list.first == node) {
                     list.first = @field(node, next);
                     if (list.last == node) {
-                        assert(list.first == null);
+                        assert(list.first == null); // no-coverage (fluke?)
                         list.last = list.first;
                     }
                     @field(node, next) = null;
@@ -649,7 +647,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                 if (list.first == node) {
                     list.first = @field(node, next);
                     if (list.last == node) {
-                        assert(list.first == null);
+                        assert(list.first == null); // no-coverage
                         list.last = list.first;
                     }
                     @field(node, next) = null;
@@ -689,11 +687,13 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// After this, the argument list will be empty.  It is legal for either
             /// list, or both, to begin empty.
             pub fn concat(list: *List, l2: *List) void {
+                defer {
+                    l2.first = null;
+                    l2.last = null;
+                }
                 if (list.last) |last| {
                     @field(last, next) = l2.first;
                     list.last = l2.last;
-                    l2.first = null;
-                    l2.last = null;
                     return;
                 }
                 assert(list.first == null);
@@ -955,11 +955,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                         } else if (b) |b_ptr| {
                             @field(ptr, next) = b_ptr;
                             return .{ head, @field(b_ptr, link_field).findLast() };
-                        } else {
-                            // Unreachable but if it weren't we'd do this:
-                            return .{ head, ptr }; // So why not ¯\_(ツ)_/¯
-                            //
-                        }
+                        } else unreachable;
                     }
                 }.msort;
             }
@@ -1054,7 +1050,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// a doubly-linked list is far more comfortable to operate _as_ a
         /// list, not simply a node with stuff hanging off it in one or both
         /// directions.
-        pub fn toList(link: *Link) List {
+        pub fn asList(link: *Link) List {
             return .{ .first = link.findFirst(), .last = link.findLast() };
         }
 
@@ -1277,7 +1273,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             const node = base(link);
             var m_node: ?*Node = node;
             var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
-            while (@field(m_node, next)) |next_node| {
+            while (@field(m_node.?, next)) |next_node| {
                 if (has_limit) limit += 1;
                 @field(next_node, prev) = m_node;
                 m_node = next_node;
@@ -1295,7 +1291,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             const node = base(link);
             var m_node: ?*Node = node;
             var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
-            while (@field(m_node, prev)) |prev_node| {
+            while (@field(m_node.?, prev)) |prev_node| {
                 if (has_limit) limit += 1;
                 @field(prev_node, next) = m_node;
                 m_node = prev_node;
@@ -1551,6 +1547,9 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                     } else if (m_first) |first| {
                         return .{ first, m_last orelse first };
                     }
+                }
+                if (m_first) |first| {
+                    return .{ first, m_last orelse first };
                 } else return null;
             }
 
@@ -1575,6 +1574,9 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                     } else if (m_first) |first| {
                         return .{ m_last orelse first, first };
                     }
+                }
+                if (m_first) |first| {
+                    return .{ m_last orelse first, first };
                 } else return null;
             }
 
@@ -1584,7 +1586,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 // Cheating is ok when you make the rules.
                 var list: List = .empty;
                 list.first = @field(node, next);
-                return m.firstMatch(list);
+                return m.firstMatch(&list);
             }
 
             /// Find the previous (backward) match before the provided Node.
@@ -1592,17 +1594,16 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             pub fn prevMatch(m: *Matcher, node: *Node) ?*Node {
                 var list: List = .empty;
                 list.last = @field(node, prev);
-                return m.lastMatch(list);
+                return m.lastMatch(&list);
             }
 
             /// Find the next (forward) run after the provided Node.
             /// See `firstRun` for details.  Iterative use should pass
             /// in `run.@"1"`.
             pub fn nextRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
-                // Cheating is ok when you make the rules.
                 var list: List = .empty;
                 list.first = @field(node, next);
-                return m.firstRun(list);
+                return m.firstRun(&list);
             }
 
             /// Find the previous (backward) run before the provided Node.
@@ -1611,7 +1612,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             pub fn prevRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
                 var list: List = .empty;
                 list.last = @field(node, prev);
-                return m.lastRun(list);
+                return m.lastRun(&list);
             }
 
             /// Filter the list in a forward direction.  Just a synonym for
@@ -1655,6 +1656,22 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                     if (has_limit) if (limit >= seek_limit) @panic("filterBackward exceeded seek limit");
                 }
                 return flist;
+            }
+
+            pub fn count(m: *Matcher, list: *List) usize {
+                var matches: usize = 0;
+                var m_node: ?*Node = list.last;
+                var limit: (if (has_limit) usize else void) = if (has_limit) 0 else {};
+                while (m_node) |node| {
+                    if (has_limit) limit += 1;
+                    const m_next = @field(node, prev);
+                    if (m.match(m.ctx, node)) {
+                        matches += 1;
+                    }
+                    m_node = m_next;
+                    if (has_limit) if (limit >= seek_limit) @panic("count exceeded seek limit");
+                }
+                return matches;
             }
 
             /// Return a finder, which will iterate over the list in either
@@ -1822,9 +1839,9 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             /// Arguments:
             ///     list1: the list to concatenate onto
             ///     list2: the list to be concatenated
-            pub fn concatByMoving(list1: *List, list2: *List) void {
+            pub fn concat(list1: *List, list2: *List) void {
                 const l2_first = list2.first orelse {
-                    assert(list2.last == null);
+                    assert(list2.last == null); // no-coverage
                     return;
                 };
                 if (list1.last) |l1_last| {
@@ -1902,7 +1919,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             /// function returns, `list2` will be empty.  This is valid to
             /// call when `node` is either the first or the last node on the
             /// receiver list, but if this is known to be the case, prefer
-            /// `concatByMoving`.  It is assumed that `list` has contents (at
+            /// `concat`.  It is assumed that `list` has contents (at
             /// least `node`), and checked illegal behavior if `list2` does not.
             pub fn spliceBackwardOf(list: *List, node: *Node, list2: *List) void {
                 @field(node, link_field).spliceBackward(list2);
@@ -1995,6 +2012,17 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 return node;
             }
 
+            /// Cast a List to some other Zelda-type List.  This is a
+            /// convenience for the case where more than one Zelda has
+            /// been created, in order to get more than one sort order.
+            pub fn castTo(list: *List, LType: type) *LType {
+                // This is, maybe, an abuse of 'no defined layout', but it's
+                // the "same" type except for certain non-structural captured
+                // details.  So maybe not?  It works, and it isn't surprising
+                // that it does.
+                return @ptrCast(@alignCast(list));
+            }
+
             /// Iterate over all nodes, returning the count.
             ///
             /// This operation is O(N).  Consider tracking the length separately
@@ -2034,7 +2062,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 return m_node == list.last;
             }
 
-            inline fn mustBeBounded(list: List) void {
+            inline fn mustBeBounded(list: *List) void {
                 if (list.first) |first| {
                     assert(@field(first, prev) == null);
                     if (list.last) |last| {
@@ -2084,7 +2112,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                     return;
                 }
                 mustBeBounded(list);
-                insertSortFn(lessThanEq, next)(list.first.?);
+                insertSortFn(lessThanEq, next)(list.first.?, node);
                 adjustEnds(list);
             }
 
@@ -2097,7 +2125,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                     return;
                 }
                 mustBeBounded(list);
-                insertSortFn(lessThanEq, prev)(list.last.?);
+                insertSortFn(lessThanEq, prev)(list.last.?, node);
                 adjustEnds(list);
             }
 
@@ -2110,7 +2138,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                     return;
                 }
                 mustBeBounded(list);
-                insertSortFn(greaterThanEq, next)(list.first.?);
+                insertSortFn(greaterThanEq, next)(list.first.?, node);
                 adjustEnds(list);
             }
 
@@ -2123,7 +2151,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                     return;
                 }
                 mustBeBounded(list);
-                insertSortFn(greaterThanEq, prev)(list.last.?);
+                insertSortFn(lessThanEq, prev)(list.last.?, node);
                 adjustEnds(list);
             }
 
@@ -2180,16 +2208,16 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         fn insertSortFn(
             orderFn: fn (*Node, *Node) callconv(.@"inline") bool,
             comptime direction: []const u8,
-        ) fn (*Node, *Node) *Node {
+        ) fn (*Node, *Node) void {
             return struct {
                 pub fn insert(head: *Node, node: *Node) void {
                     orderGuard();
                     const is_next = std.mem.eql(u8, direction, next);
                     if (orderFn(node, head)) {
                         if (is_next)
-                            @field(head, link_field).insertBefore(node)
+                            @field(head, link_field).emplaceBackward(node)
                         else
-                            @field(head, link_field).insertAfter(node);
+                            @field(head, link_field).emplaceForward(node);
                         return;
                     }
                     var m_next = @field(head, direction);
@@ -2199,9 +2227,9 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                         if (has_limit) limit += 1;
                         if (orderFn(node, next_node)) {
                             if (is_next)
-                                @field(next_node, link_field).insertBefore(node)
+                                @field(next_node, link_field).emplaceBackward(node)
                             else
-                                @field(next_node, link_field).insertAfter(node);
+                                @field(next_node, link_field).emplaceForward(node);
                             return;
                         }
                         last = next_node;
@@ -2209,9 +2237,9 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                         if (has_limit) if (limit >= seek_limit) @panic("insertSorted exceeded seek limit");
                     }
                     if (is_next)
-                        @field(head, link_field).insertAfter(node)
+                        @field(head, link_field).emplaceForward(node)
                     else
-                        @field(head, link_field).insertBefore(node);
+                        @field(head, link_field).emplaceBackward(node);
                     return;
                 }
             }.insert;
@@ -2599,7 +2627,7 @@ test "more sorts" {
     }
     sorts[511].next_val = null;
     {
-        var list = sorts[0].mixer.toList();
+        var list = sorts[0].mixer.asList();
         list.sortAscending();
         try expect(list.first.?.mixer.isOrderedAscending());
         const biggest = list.last;
@@ -2647,6 +2675,29 @@ test "more sorts" {
         half_list.insertOrderedAscending(&sorts[remove_at]);
         try expect(half_list.isOrderedAscending());
         try expectEqual(512, half_list.first.?.mixer.len());
+        {
+            var top = &sorts[0];
+            for (1..512) |i| {
+                if (sorts[i].val > top.val) top = &sorts[i];
+            }
+            half_list.removeUnchecked(top);
+            _ = half_list.first.?.mixer.insertOrderedAscending(top);
+            half_list.last = top;
+        }
+        {
+            var bottom = &sorts[0];
+            for (1..512) |i| {
+                if (sorts[i].val < bottom.val) bottom = &sorts[i];
+            }
+            half_list.removeUnchecked(bottom);
+            half_list.insertOrderedAscending(bottom);
+        }
+        _ = half_list.remove(half_list.first.?);
+        _ = half_list.removeUnchecked(half_list.first.?);
+        var new_list: Sorted.Link.List = .empty;
+        new_list.concat(&half_list);
+        try expectEqual(null, half_list.first);
+        try expectEqual(null, half_list.last);
     }
 }
 
@@ -2747,6 +2798,8 @@ test "A Link Between Worlds" {
     try testing.expectEqual(4, list.last.?.data);
 
     try testing.expect(list.len() == 2);
+    three.link.removeSelfFromList();
+    two.link.removeSelfFromList();
 }
 
 test "concatenation and splicing" {
@@ -2775,7 +2828,7 @@ test "concatenation and splicing" {
     list2.append(&four);
     list2.append(&five);
 
-    list1.concatByMoving(&list2);
+    list1.concat(&list2);
 
     try testing.expect(list1.last == &five);
     try testing.expect(list1.len() == 5);
@@ -2807,7 +2860,7 @@ test "concatenation and splicing" {
     }
 
     // Swap them back, this verifies that concatenating to an empty list works.
-    list2.concatByMoving(&list1);
+    list2.concat(&list1);
     try testing.expect(!list2.isEmpty());
     try testing.expect(list1.isEmpty());
 
@@ -2834,7 +2887,7 @@ test "concatenation and splicing" {
     }
 
     // Swap again
-    list1.concatByMoving(&list2);
+    list1.concat(&list2);
 
     // Extract a range.
     var sublist = list1.extractRange(&two, &four);
@@ -3004,14 +3057,39 @@ const Card = struct {
     }
 };
 
+const match_lib = struct {
+    pub fn matchSuit(ctx: ?*anyopaque, card: *Card) bool {
+        const suit_val: usize = @intFromPtr(ctx);
+        const suit: Card.SuitKind = @enumFromInt(suit_val);
+        return card.suit == suit;
+    }
+
+    pub fn matchFace(ctx: ?*anyopaque, card: *Card) bool {
+        const face_val: isize = @intFromPtr(ctx);
+        const face: Card.FaceKind = @enumFromInt(face_val);
+        return card.face == face;
+    }
+
+    pub fn suitor(suit: Card.SuitKind) Card.Link.Matcher {
+        const suit_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(suit))));
+        return .{ .ctx = suit_ptr, .match = matchSuit };
+    }
+
+    pub fn facer(face: Card.FaceKind) Card.Link.Matcher {
+        const face_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(face))));
+        .{ .ctx = face_ptr, .match = matchSuit };
+    }
+};
+
 fn cardTricks(comptime count: comptime_int) !void {
     var deck: [count]Card = .{Card.trump} ** count;
     var seed: u64 = undefined;
     var prng = std.Random.DefaultPrng.init(rand: {
+        if (options.seed) |s| break :rand s;
         try std.posix.getrandom(std.mem.asBytes(&seed));
         break :rand seed;
     });
-    errdefer std.debug.print("Seed on fail: 0x{x}\n", .{seed});
+    errdefer std.debug.print("Seed on fail: {d}\n", .{seed});
     for (0..count) |i| {
         deck[i].suit = prng.random().enumValue(Card.SuitKind);
         deck[i].face = prng.random().enumValue(Card.FaceKind);
@@ -3019,7 +3097,7 @@ fn cardTricks(comptime count: comptime_int) !void {
         deck[i].link.emplaceForward(&deck[i + 1]);
     }
     {
-        var facesort = deck[prng.random().uintLessThan(usize, count)].link.toList();
+        var facesort = deck[prng.random().uintLessThan(usize, count)].link.asList();
         facesort.sortAscending();
         try expect(facesort.isWellFormed());
         try expect(facesort.isOrderedAscending());
@@ -3030,7 +3108,7 @@ fn cardTricks(comptime count: comptime_int) !void {
         try expectEqual(count, facesort.len());
     }
     {
-        var suitsort = deck[prng.random().uintLessThan(usize, count)].suitlink.toList();
+        var suitsort = deck[prng.random().uintLessThan(usize, count)].suitlink.asList();
         suitsort.sortAscending();
         try expect(suitsort.isWellFormed());
         try expect(suitsort.isOrderedAscending());
@@ -3039,32 +3117,14 @@ fn cardTricks(comptime count: comptime_int) !void {
         try expect(suitsort.isWellFormed());
         try expect(suitsort.isOrderedDescending());
         try expectEqual(count, suitsort.len());
+        const nine = suitsort.extractRange(&deck[9], &deck[9]);
+        try expect(nine.first == nine.last);
+        suitsort.insertDescendingBackward(nine.first.?);
+        try expect(suitsort.isWellFormed());
+        try expect(suitsort.isOrderedDescending());
     }
-    const match_lib = struct {
-        pub fn matchSuit(ctx: ?*anyopaque, card: *Card) bool {
-            const suit_val: usize = @intFromPtr(ctx);
-            const suit: Card.SuitKind = @enumFromInt(suit_val);
-            return card.suit == suit;
-        }
-
-        pub fn matchFace(ctx: ?*anyopaque, card: *Card) bool {
-            const face_val: isize = @intFromPtr(ctx);
-            const face: Card.FaceKind = @enumFromInt(face_val);
-            return card.face == face;
-        }
-
-        pub fn suitor(suit: Card.SuitKind) Card.Link.Matcher {
-            const suit_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(suit))));
-            return .{ .ctx = suit_ptr, .match = matchSuit };
-        }
-
-        pub fn facer(face: Card.FaceKind) Card.Link.Matcher {
-            const face_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(face))));
-            .{ .ctx = face_ptr, .match = matchSuit };
-        }
-    };
     {
-        var sorted = deck[0].link.toList();
+        var sorted = deck[0].link.asList();
         sorted.sortAscending();
         try expect(sorted.isOrderedAscending());
         var matcher = match_lib.suitor(.clubs);
@@ -3085,22 +3145,168 @@ fn cardTricks(comptime count: comptime_int) !void {
         try expectEqual(null, sorted.first);
         try expectEqual(null, sorted.last);
         try expectEqual(count, spades.len() + hearts.len() + diamonds.len() + clubs.len() + sorted.len());
-        var face = clubs.first.?.link.toList();
-        try expect(face.isOrderedAscending());
-        face = diamonds.first.?.link.toList();
-        try expect(face.isOrderedAscending());
-        face = hearts.first.?.link.toList();
-        try expect(face.isOrderedAscending());
-        face = spades.first.?.link.toList();
-        try expect(face.isOrderedAscending());
+        var face = sorted;
+        if (clubs.first) |first_club| {
+            face = first_club.link.asList();
+            try expect(face.isOrderedAscending());
+        }
+        if (diamonds.first) |first_diamond| {
+            face = first_diamond.link.asList();
+            try expect(face.isOrderedAscending());
+        }
+        if (hearts.first) |first_heart| {
+            face = first_heart.link.asList();
+            try expect(face.isOrderedAscending());
+        }
+        if (spades.first) |first_spade| {
+            face = first_spade.link.asList();
+            try expect(face.isOrderedAscending());
+            // amusingly, this is not consistently the case!
+            // try expect(!face.isOrderedDescending());
+        }
+        const FaceList = Card.Link.List;
+        sorted = clubs.castTo(FaceList).*;
+        sorted.concat(diamonds.castTo(FaceList));
+        sorted.concat(hearts.castTo(FaceList));
+        sorted.concat(spades.castTo(FaceList));
+        try expect(sorted.castTo(Card.SuitLink.List).isOrderedAscending());
+    }
+    // re-shuffle
+    deck[0].under = null;
+    for (0..count) |i| {
+        deck[i].suit = prng.random().enumValue(Card.SuitKind);
+        deck[i].face = prng.random().enumValue(Card.FaceKind);
+        if (count - i == 1) {
+            deck[i].over = null;
+        } else {
+            deck[i].over = &deck[i + 1];
+        }
+    }
+    const last_link = deck[0].link.fixBackLinks();
+    var list = deck[0].link.asList();
+    try expect(list.isWellFormed());
+    try expectEqual(last_link, list.last);
+    {
+        var matcher = match_lib.suitor(.clubs);
+        var club_count: usize = 0;
+        const m_first_club = matcher.firstMatch(&list);
+
+        if (m_first_club) |_| {
+            club_count += 1;
+            var m_club = m_first_club;
+            while (matcher.nextMatch(m_club.?)) |next_club| {
+                club_count += 1;
+                m_club = next_club;
+            }
+        }
+        var clubs = matcher.filter(&list);
+        try expectEqual(club_count, clubs.len());
+        list.concat(&clubs);
+    }
+    list.sortDescending();
+    try expectEqual(count, list.len());
+    {
+        var matcher = match_lib.suitor(.diamonds);
+        var diamond_count: usize = 0;
+        const m_last_diamond = matcher.lastMatch(&list);
+        if (m_last_diamond) |_| {
+            diamond_count += 1;
+            var m_diamond = m_last_diamond;
+            while (matcher.prevMatch(m_diamond.?)) |next_diamond| {
+                diamond_count += 1;
+                m_diamond = next_diamond;
+            }
+        }
+        var diamonds = matcher.filter(&list);
+        try expectEqual(diamond_count, diamonds.len());
+        list.concat(&diamonds);
+    }
+    list.sortAscending();
+    try expectEqual(count, list.len());
+    {
+        var matcher = match_lib.suitor(.hearts);
+        const h_c = matcher.count(&list);
+        var m_heart_run = matcher.firstRun(&list);
+        var heart_count1: usize = 0;
+        var heart_count2: usize = 0;
+        while (m_heart_run) |heart_run| {
+            heart_count1 += 1;
+            var hearts = heart_run.@"0";
+            if (heart_run.@"0" != heart_run.@"1") while (hearts.over) |hover| {
+                heart_count1 += 1;
+                if (hover == heart_run.@"1") break;
+                hearts = hover;
+            };
+            const m_under = heart_run.@"0".under;
+            var h_list = list.extractRange(heart_run.@"0", heart_run.@"1");
+            const h_len = h_list.len();
+            heart_count2 += h_len;
+            if (m_under) |under| {
+                list.spliceForwardOf(under, &h_list);
+                assert(under.over == heart_run.@"0");
+                assert(heart_run.@"0".under == under);
+            } else {
+                h_list.concat(&list);
+                list = h_list;
+            }
+            m_heart_run = matcher.nextRun(heart_run.@"1");
+        }
+        try expect(list.isWellFormed());
+        try expectEqual(count, list.len());
+        try expectEqual(h_c, matcher.count(&list));
+        var hearts = matcher.filter(&list);
+        try expectEqual(h_c, hearts.len());
+        try expectEqual(hearts.len(), heart_count1);
+        try expectEqual(h_c, heart_count1);
+        try expectEqual(heart_count2, heart_count1);
+        list.concat(&hearts);
+    }
+    {
+        var matcher = match_lib.suitor(.spades);
+        const sp_c = matcher.count(&list);
+        var m_spade_run = matcher.lastRun(&list);
+        var spade_count1: usize = 0;
+        var spade_count2: usize = 0;
+        while (m_spade_run) |spade_run| {
+            spade_count1 += 1;
+            var spades = spade_run.@"0";
+            if (spade_run.@"0" != spade_run.@"1") while (spades.over) |hover| {
+                spade_count1 += 1;
+                if (hover == spade_run.@"1") break;
+                spades = hover;
+            };
+            const m_under = spade_run.@"0".under;
+            var spade_list = list.extractRange(spade_run.@"0", spade_run.@"1");
+            const s_len = spade_list.len();
+            spade_count2 += s_len;
+            if (m_under) |under| {
+                list.spliceForwardOf(under, &spade_list);
+                assert(under.over == spade_run.@"0");
+                assert(spade_run.@"0".under == under);
+            } else {
+                spade_list.concat(&list);
+                list = spade_list;
+            }
+            m_spade_run = matcher.prevRun(spade_run.@"0");
+        }
+        try expect(list.isWellFormed());
+        try expectEqual(count, list.len());
+        try expectEqual(sp_c, matcher.count(&list));
+        const spades = matcher.filter(&list);
+        try expectEqual(sp_c, spades.len());
+        try expectEqual(spades.len(), spade_count1);
+        try expectEqual(sp_c, spade_count1);
+        try expectEqual(spade_count2, spade_count1);
     }
 }
 
 test cardTricks {
     try cardTricks(52);
     try cardTricks(1023);
+    try cardTricks(13);
 }
 
 const std = @import("std");
+const options = @import("options");
 const assert = std.debug.assert;
 const expect = std.testing.expect;
