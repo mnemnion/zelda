@@ -218,12 +218,16 @@ iteration which does more cycles than that limit will panic the program.
 It is legal, but discouraged, to use the style-guide-approved form
 `zelda_seek_limit`.  It is the intention of this library that all loops
 used will terminate if a seek limit is declared, after no less than the
-indicated number of iterations.
+indicated number of iterations[^2].
 
 Should you wish to make this build-configurable, arrange for the seek
 limit to be of type `@TypeOf(null)` and it will be disabled.  Note that
 this is subtly different from a `?usize` which happens to have the
 _value_ `null`.
+
+[^2]: When practical and efficient, it will permit no more than the
+indicated number of iterations as well.  Which it usually is, but not
+always.
 
 ## Cool, How'd You Do It?
 

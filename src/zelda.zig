@@ -174,7 +174,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         }
 
         /// Insert the argument node after the receiver node.
-        pub fn insertAfter(link: *Link, new_node: *Node) void {
+        pub fn emplace(link: *Link, new_node: *Node) void {
             const node = base(link);
             @field(new_node, next) = @field(node, next);
             @field(node, next) = new_node;
@@ -1673,113 +1673,6 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 }
                 return matches;
             }
-
-            /// Return a finder, which will iterate over the list in either
-            /// direction, returning what it finds.  Mutating the list directly
-            /// while using a Finder can have confusing results, so let the
-            /// Finder do any popping you might need.  Important note: the
-            /// Finder _will not_ return results until an end is specified with
-            /// `finder.fromFirst` or `finder.fromLast`.  This can be confused
-            /// with no matches, feel free to use the convenience functions
-            /// `forwardFinder` and `backwardFinder`.
-            pub fn finder(m: *Matcher, list: *List) Finder {
-                return .{ .m = m, .list = list };
-            }
-
-            /// Return a Finder set to the start of the list.  Despite the
-            /// name, this can search in either direction: it was chosen for
-            /// easier autocomplete.
-            pub fn forwardFinder(m: *Matcher, list: *List) Finder {
-                var the_finder = m.finder(list);
-                the_finder.fromFirst();
-                return the_finder;
-            }
-
-            /// Return a Finder set to the end of the list.  Despite the
-            /// name, this can search in either direction: it was chosen for
-            /// easier autocomplete.
-            pub fn backwardFinder(m: *Matcher, list: *List) Finder {
-                var the_finder = m.finder(list);
-                the_finder.fromLast();
-                return the_finder;
-            }
-
-            pub const Finder = struct {
-                this: ?*Node = null,
-                m: *Matcher,
-                fwd: bool = true,
-                list: *List,
-
-                /// Start iteration from the first node of the list.
-                pub fn fromFirst(f: *Finder) void {
-                    f.this = f.list.first;
-                    f.fwd = true;
-                }
-
-                /// Start iteration from the last node of the list.
-                pub fn fromLast(f: *Finder) void {
-                    f.this = f.list.last;
-                    f.fwd = false;
-                }
-
-                /// Return the next matching Node, advancing.  The Node is
-                /// not removed.
-                pub fn next(f: *Finder) ?*Node {
-                    f.fwd = true;
-                    if (f.this) |it| {
-                        f.this = f.m.nextMatch(it);
-                        return f.this;
-                    } else return null;
-                }
-
-                /// Return the previous matching node, advancing.  The Node is
-                /// not removed.
-                pub fn prev(f: *Finder) ?*Node {
-                    f.fwd = false;
-                    if (f.this) |it| {
-                        f.this = f.m.prevMatch(it);
-                        return f.this;
-                    } else return null;
-                }
-
-                /// Return the next matching node, without advancing.  The Node is
-                /// not removed.
-                pub fn peekNext(f: *Finder) ?*Node {
-                    if (f.this) |it| {
-                        return f.m.nextMatch(it);
-                    }
-                }
-
-                /// Return the previous matching node, without advancing.  The Node is
-                /// not removed.
-                pub fn peekPrev(f: *Finder) ?*Node {
-                    if (f.this) |it| {
-                        return f.m.prevMatch(it);
-                    }
-                }
-
-                /// Remove the node from the list.  Use this when iterating or you
-                /// will probably lose your place (the integrity of the list will
-                /// not be affected).
-                pub fn remove(f: *Finder, node: *Node) void {
-                    if (f.this == node) {
-                        if (f.fwd) {
-                            f.this = @field(f.this.?, Link.next);
-                        } else {
-                            f.this = @field(f.this.?, Link.prev);
-                        }
-                    }
-                    f.list.remove(node);
-                }
-
-                /// Remove the node from the list, and return it.  Use this
-                /// when iterating or you will probably lose your place (the
-                /// integrity of the list will not be affected).
-                pub fn pop(f: *Finder, node: *Node) *Node {
-                    f.remove(node);
-                    return node;
-                }
-            };
         };
 
         /// A doubly-linked list of `*Node`, comprising the first and last
@@ -2168,6 +2061,11 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 if (list.first == null) return true;
                 return inOrderFn(greaterThanEq)(list.first.?);
             }
+
+            pub fn allEqual(list: *List) bool {
+                if (list.first == null) return true;
+                return inOrderFn(equal)(list.first.?);
+            }
         };
 
         //| Ordering Impl
@@ -2205,6 +2103,10 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             return @field(Node, order_name)(n1, n2) != .lt;
         }
 
+        inline fn equal(n1: *const Node, n2: *const Node) bool {
+            return @field(Node, order_name)(n1, n2) == .eq;
+        }
+
         fn insertSortFn(
             orderFn: fn (*Node, *Node) callconv(.@"inline") bool,
             comptime direction: []const u8,
@@ -2236,10 +2138,11 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                         m_next = @field(next_node, direction);
                         if (has_limit) if (limit >= seek_limit) @panic("insertSorted exceeded seek limit");
                     }
-                    if (is_next)
-                        @field(head, link_field).emplaceForward(node)
+                    if (is_next) // no-coverage these are at least hard to hit, due to optimization
+                        @field(head, link_field).emplaceForward(node) // no-coverage
                     else
-                        @field(head, link_field).emplaceBackward(node);
+                        @field(head, link_field).emplaceBackward(node); // no-coverage
+                    // unreachable? Not sure.
                     return;
                 }
             }.insert;
@@ -2458,7 +2361,7 @@ const Hyrule = struct {
 test Hyrule {
     var this: Hyrule = .init(23);
     var that: Hyrule = .init(42);
-    this.link.insertAfter(&that);
+    this.link.emplace(&that);
     try expectEqual(this.next_member.?, &that);
     _ = this.link.swap();
     try expectEqual(that.next_member.?, &this);
@@ -2488,10 +2391,10 @@ test "A Link to the Past" {
     var five: L = .{ .data = 5 };
 
     list.prepend(&two); // {2}
-    two.link.insertAfter(&five); // {2, 5}
+    two.link.emplace(&five); // {2, 5}
     list.prepend(&one); // {1, 2, 5}
-    two.link.insertAfter(&three); // {1, 2, 3, 5}
-    three.link.insertAfter(&four); // {1, 2, 3, 4, 5}
+    two.link.emplace(&three); // {1, 2, 3, 5}
+    three.link.emplace(&four); // {1, 2, 3, 4, 5}
 
     try testing.expect(list.len() == 5);
 
@@ -2537,7 +2440,7 @@ const Sorted = struct {
         if (sign < 0)
             return .lt
         else if (sign == 0)
-            return .eq
+            return .eq // no-coverage (optimized out!)
         else
             return .gt;
     }
@@ -2599,10 +2502,121 @@ test "Sorted singly-linked list" {
     }
 }
 
+fn singleSortTest(count: comptime_int) !void {
+    var sorts: [count]Sorted = .{Sorted.empty} ** count;
+    var seed: u64 = undefined;
+    var prng = std.Random.DefaultPrng.init(rand: {
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :rand seed;
+    });
+    errdefer std.debug.print("Seed on fail: 0x{x}", .{seed});
+    for (0..count) |i| {
+        sorts[i].val = prng.random().int(u32);
+        if (i < count - 1) {
+            sorts[i].next_val = &sorts[i + 1];
+        }
+    }
+    {
+        const sorted = sorts[0].mixer.sortAscending();
+        try expect(sorted.mixer.isOrderedAscending());
+        const dsorted = sorted.mixer.sortDescending();
+        try expect(dsorted.mixer.isOrderedDescending());
+    }
+    for (0..count) |i| {
+        sorts[i].val = prng.random().int(u32);
+        if (i < count - 1) {
+            sorts[i].next_val = &sorts[i + 1];
+        }
+    }
+    sorts[count - 1].next_val = null;
+    {
+        var list = sorts[0].mixer.asList();
+        list.sortAscending();
+        try expect(list.first.?.mixer.isOrderedAscending());
+        const biggest = list.last;
+        list.sortDescending();
+        try expect(list.first.?.mixer.isOrderedDescending());
+        try expectEqual(biggest, list.first.?);
+        try expectEqual(count, list.len());
+    }
+    for (0..count) |i| {
+        sorts[i].val = prng.random().int(u32);
+        if (i < count - 1) {
+            sorts[i].next_val = &sorts[i + 1];
+        }
+    }
+    sorts[count - 1].next_val = null;
+    {
+        var list = sorts[0].mixer.toSortedListAscending();
+        try expect(list.first.?.mixer.isOrderedAscending());
+        const biggest = list.last;
+        list.sortDescending();
+        try expect(list.first.?.mixer.isOrderedDescending());
+        list.sortDescending();
+        try expect(list.first.?.mixer.isOrderedDescending());
+        try expectEqual(biggest, list.first.?);
+        try expectEqual(count, list.len());
+        var split_at = prng.random().intRangeLessThan(u32, 0, count);
+        while (&sorts[split_at] == list.first or &sorts[split_at] == list.last) {
+            split_at = prng.random().intRangeLessThan(u32, 0, count); // no-coverage
+        }
+        var half_list = list.splitAfter(&sorts[split_at]);
+        half_list.concat(&list);
+        try expectEqual(count, half_list.len());
+        half_list.sortDescending();
+        try expect(half_list.first.?.mixer.isOrderedDescending());
+        try expect(half_list.isOrderedDescending());
+        try expect(!half_list.isOrderedAscending());
+        half_list.sortAscending();
+        try expect(half_list.first.?.mixer.isOrderedAscending());
+        try expect(half_list.isOrderedAscending());
+        try expectEqual(count, half_list.len());
+        const remove_at = prng.random().intRangeLessThan(u32, 0, count);
+        half_list.remove(&sorts[remove_at]);
+        sorts[remove_at].val = std.math.maxInt(u32);
+        try expectEqual(count - 1, half_list.first.?.mixer.len());
+        half_list.insertOrderedAscending(&sorts[remove_at]);
+        try expect(half_list.isOrderedAscending());
+        try expectEqual(count, half_list.first.?.mixer.len());
+        {
+            var top = &sorts[0];
+            for (1..count) |i| {
+                if (sorts[i].val > top.val) top = &sorts[i];
+            }
+            half_list.removeUnchecked(top);
+            _ = half_list.first.?.mixer.insertOrderedAscending(top);
+            half_list.last = top;
+        }
+        {
+            var bottom = &sorts[0];
+            for (1..count) |i| {
+                if (sorts[i].val < bottom.val) bottom = &sorts[i];
+            }
+            half_list.removeUnchecked(bottom);
+            half_list.insertOrderedAscending(bottom);
+        }
+        _ = half_list.remove(half_list.first.?);
+        _ = half_list.removeUnchecked(half_list.first.?);
+        var new_list: Sorted.Link.List = .empty;
+        new_list.concat(&half_list);
+        try expectEqual(null, half_list.first);
+        try expectEqual(null, half_list.last);
+    }
+}
+
+test singleSortTest {
+    try singleSortTest(129);
+    try singleSortTest(29);
+}
+
 test "more sorts" {
     var sorts: [512]Sorted = .{Sorted.empty} ** 512;
     var seed: u64 = undefined;
     var prng = std.Random.DefaultPrng.init(rand: {
+        if (options.seed) |s| {
+            seed = s;
+            break :rand s;
+        }
         try std.posix.getrandom(std.mem.asBytes(&seed));
         break :rand seed;
     });
@@ -2655,7 +2669,7 @@ test "more sorts" {
         try expectEqual(512, list.len());
         var split_at = prng.random().intRangeLessThan(u32, 0, 512);
         while (&sorts[split_at] == list.first or &sorts[split_at] == list.last) {
-            split_at = prng.random().intRangeLessThan(u32, 0, 512);
+            split_at = prng.random().intRangeLessThan(u32, 0, 512); // no-coverage
         }
         var half_list = list.splitAfter(&sorts[split_at]);
         half_list.concat(&list);
@@ -3018,8 +3032,8 @@ const Card = struct {
         nine,
         ten,
         jack,
-        king,
         queen,
+        king,
     };
 
     pub const SuitKind = enum(i8) {
@@ -3065,7 +3079,7 @@ const match_lib = struct {
     }
 
     pub fn matchFace(ctx: ?*anyopaque, card: *Card) bool {
-        const face_val: isize = @intFromPtr(ctx);
+        const face_val: usize = @intFromPtr(ctx);
         const face: Card.FaceKind = @enumFromInt(face_val);
         return card.face == face;
     }
@@ -3077,7 +3091,7 @@ const match_lib = struct {
 
     pub fn facer(face: Card.FaceKind) Card.Link.Matcher {
         const face_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(face))));
-        .{ .ctx = face_ptr, .match = matchSuit };
+        return .{ .ctx = face_ptr, .match = matchFace };
     }
 };
 
@@ -3085,7 +3099,10 @@ fn cardTricks(comptime count: comptime_int) !void {
     var deck: [count]Card = .{Card.trump} ** count;
     var seed: u64 = undefined;
     var prng = std.Random.DefaultPrng.init(rand: {
-        if (options.seed) |s| break :rand s;
+        if (options.seed) |s| {
+            seed = s;
+            break :rand s;
+        }
         try std.posix.getrandom(std.mem.asBytes(&seed));
         break :rand seed;
     });
@@ -3161,8 +3178,7 @@ fn cardTricks(comptime count: comptime_int) !void {
         if (spades.first) |first_spade| {
             face = first_spade.link.asList();
             try expect(face.isOrderedAscending());
-            // amusingly, this is not consistently the case!
-            // try expect(!face.isOrderedDescending());
+            try expect(face.allEqual() or !face.isOrderedDescending());
         }
         const FaceList = Card.Link.List;
         sorted = clubs.castTo(FaceList).*;
@@ -3203,7 +3219,7 @@ fn cardTricks(comptime count: comptime_int) !void {
         try expectEqual(club_count, clubs.len());
         list.concat(&clubs);
     }
-    list.sortDescending();
+    list = list.first.?.link.sortDescending();
     try expectEqual(count, list.len());
     {
         var matcher = match_lib.suitor(.diamonds);
@@ -3292,16 +3308,103 @@ fn cardTricks(comptime count: comptime_int) !void {
         try expect(list.isWellFormed());
         try expectEqual(count, list.len());
         try expectEqual(sp_c, matcher.count(&list));
-        const spades = matcher.filter(&list);
+        var spades = matcher.filter(&list);
         try expectEqual(sp_c, spades.len());
         try expectEqual(spades.len(), spade_count1);
         try expectEqual(sp_c, spade_count1);
         try expectEqual(spade_count2, spade_count1);
+        list.concat(&spades);
     }
+    try expect(!list.first.?.link.inCycleForward());
+    try expect(!list.last.?.link.inCycleBackward());
+    {
+        list = list.first.?.link.sortAscending();
+        const first = list.popNode(list.first.?);
+        try expect(!first.link.inCycleForward());
+        list.insertAscendingForward(first);
+        list.adjustEnds();
+        var matcher = match_lib.facer(.king);
+        if (matcher.firstRun(&list)) |kings| {
+            try expectEqual(null, kings.@"1".over);
+            var ends = list.extractRange(kings.@"0", kings.@"1");
+            list.concat(&ends);
+        }
+        matcher = match_lib.facer(.ace);
+        if (matcher.lastRun(&list)) |aces| {
+            try expectEqual(null, aces.@"0".under);
+            var fronts = list.extractRange(aces.@"0", aces.@"1");
+            fronts.concat(&list);
+            list = fronts;
+            try expect(list.isOrderedAscending());
+        }
+        try expectEqual(count, list.len());
+    }
+    list = list.extractRange(list.first.?, list.last.?);
+    {
+        const prev = list.last.?;
+        list.last = prev.under;
+        list.adjustEnds();
+        try expectEqual(list.last, prev);
+    }
+    {
+        var jacks: Card.Link.List = .empty;
+        var matcher = match_lib.facer(.jack);
+        while (matcher.removeFirstMatch(&list)) |jack| {
+            jacks.append(jack);
+        }
+        if (!jacks.isEmpty()) {
+            const jacklen = jacks.len();
+            try expectEqual(0, matcher.count(&list));
+            try expectEqual(jacklen, matcher.count(&jacks));
+            list.concat(&jacks);
+            try expectEqual(count, list.len());
+        }
+    }
+    {
+        var queens: Card.Link.List = .empty;
+        var matcher = match_lib.facer(.queen);
+        while (matcher.removeLastMatch(&list)) |queen| {
+            queens.append(queen);
+        }
+        if (!queens.isEmpty()) {
+            const queenlen = queens.len();
+            try expectEqual(0, matcher.count(&list));
+            try expectEqual(queenlen, matcher.count(&queens));
+            list.concat(&queens);
+            try expectEqual(count, list.len());
+        }
+    }
+    {
+        list.sortAscending();
+        var matcher = match_lib.suitor(.spades);
+        var spades = matcher.filterBackward(&list);
+        try expect(spades.isOrderedDescending());
+    }
+}
+
+test "missed lines" {
+    var deck: [6]Card = .{Card.trump} ** 6;
+    deck[5].face = .queen;
+
+    var list1: Card.Link.List = .empty;
+    list1.insertAscendingForward(&deck[0]);
+    var list2 = list1;
+    list2 = .empty;
+    list2.insertDescendingBackward(&deck[1]);
+    list1 = list1.extractRange(list1.first.?, list1.last.?);
+    var list3 = list2;
+    list3 = .empty;
+    list3.insertAscendingBackward(&deck[2]);
+    list3.insertAscendingBackward(&deck[3]);
+    var list4 = list2;
+    list4 = .empty;
+    list4.insertDescendingForward(&deck[4]);
+    list4.insertDescendingForward(&deck[5]);
 }
 
 test cardTricks {
     try cardTricks(52);
+    try cardTricks(78);
     try cardTricks(1023);
     try cardTricks(13);
 }

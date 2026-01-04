@@ -28,6 +28,7 @@ pub fn build(b: *std.Build) void {
     module_unit_tests.root_module.addOptions("options", opts);
 
     const run_module_unit_tests = b.addRunArtifact(module_unit_tests);
+    run_module_unit_tests.has_side_effects = true;
 
     const test_step = b.step("test", "Run unit tests");
 
@@ -38,11 +39,15 @@ pub fn build(b: *std.Build) void {
     else
         std.Build.Step.Run.addOutputDirectoryArg;
 
+    const clean = b.option(bool, "clean", "Do a 'clean' kcov run (no merge)") orelse false;
+
     const run_kcov = b.addSystemCommand(&.{
         "kcov",
-        "--clean",
-        "--exclude-line=unreachable,expect(false),panic(,no-coverage",
     });
+    if (clean) {
+        run_kcov.addArg("--clean");
+    }
+    run_kcov.addArg("--exclude-line=unreachable,errdefer,expect(false),panic(,no-coverage");
     run_kcov.addPrefixedDirectoryArg("--include-pattern=", b.path("src"));
     const coverage_output = addOutputDirectoryArg(run_kcov, ".");
     run_kcov.addArtifactArg(module_unit_tests);
