@@ -600,6 +600,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                     assert(@field(last, next) == null);
                     @field(last, next) = new_node;
                     list.last = new_node;
+                    return;
                 }
                 assert(list.first == null);
                 list.last = new_node;
@@ -672,7 +673,11 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// for diagnostic and testing purposes.
             pub fn belongsTo(list: *const List, node: *const Node) bool {
                 if (list.last == node) return true;
-                return @field(list.first, link_field).belongsTo(node);
+                if (list.first) |first| {
+                    return @field(first, link_field).belongsTo(node);
+                } else {
+                    return false;
+                }
             }
 
             /// Reverse the order of the nodes in the list, in-place, in
@@ -761,6 +766,10 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// be after that, otherwise it will be before the first node it
             /// sees which is equal to or greater than its value.
             pub fn insertOrderedAscending(list: *List, node: *Node) void {
+                if (list.first == null) {
+                    list.append(node);
+                    return;
+                }
                 if (greaterThan(node, list.last.?)) {
                     @field(list.last.?, next) = node;
                     @field(node, next) = null;
@@ -774,7 +783,11 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// order. Strictly, if it is less than the last node's value, it
             /// will be after that, otherwise it will be before the first node
             /// it sees which is equal to or less than its value.
-            pub fn insertOrderedDescending(list: *List, node: *Node) *Node {
+            pub fn insertOrderedDescending(list: *List, node: *Node) void {
+                if (list.first == null) {
+                    list.append(node);
+                    return;
+                }
                 if (lessThan(node, list.last.?)) {
                     @field(list.last.?, next) = node;
                     @field(node, next) = null;
@@ -2500,6 +2513,19 @@ test "Sorted singly-linked list" {
         const antireresorted = reresorted.mixer.sortDescending();
         try expect(antireresorted.mixer.isOrderedDescending());
     }
+    for (0..6) |i| {
+        sorts[i] = .empty;
+        sorts[i].val = @intCast(i);
+    }
+    var s_list: Sorted.Link.List = .init(null);
+    for (0..6) |i| {
+        s_list.append(&sorts[i]);
+        if (i < 5) {
+            try expect(!s_list.belongsTo(&sorts[i + 1]));
+        }
+    }
+    try expect(!s_list.isOrderedDescending());
+    try expect(s_list.isOrderedAscending());
 }
 
 fn singleSortTest(count: comptime_int) !void {
@@ -2538,6 +2564,15 @@ fn singleSortTest(count: comptime_int) !void {
         try expect(list.first.?.mixer.isOrderedDescending());
         try expectEqual(biggest, list.first.?);
         try expectEqual(count, list.len());
+        try expect(list.belongsTo(&sorts[0]));
+        var no_sort: Sorted = .empty;
+        try expect(!list.belongsTo(&no_sort));
+        try expect(!list.isEmpty());
+        var empty_list: Sorted.Link.List = .empty;
+        try expect(empty_list.isEmpty());
+        empty_list.insertOrderedDescending(&no_sort);
+        try expect(!empty_list.isEmpty());
+        try expect(empty_list.belongsTo(&no_sort));
     }
     for (0..count) |i| {
         sorts[i].val = prng.random().int(u32);
@@ -2594,6 +2629,8 @@ fn singleSortTest(count: comptime_int) !void {
             }
             half_list.removeUnchecked(bottom);
             half_list.insertOrderedAscending(bottom);
+            half_list.removeUnchecked(bottom);
+            half_list.insertOrderedDescending(bottom);
         }
         _ = half_list.remove(half_list.first.?);
         _ = half_list.removeUnchecked(half_list.first.?);
@@ -2601,6 +2638,8 @@ fn singleSortTest(count: comptime_int) !void {
         new_list.concat(&half_list);
         try expectEqual(null, half_list.first);
         try expectEqual(null, half_list.last);
+        var new_new_list = new_list.first.?.mixer.toSortedListDescending();
+        try expect(new_new_list.isOrderedDescending());
     }
 }
 
