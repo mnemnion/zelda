@@ -159,6 +159,12 @@ property of _stability_, in that no operation on a list will ever lose
 a reference to an element of that list.  A direct reference, I mean.
 An indirect reference... that's a different story.
 
+They should be considered as complementary to arrays, rather than
+competitive with them.  Even if your application has gone full
+struct-of-arrays, there are many tasks which are optimally accomplished
+with linked lists of indices into your arrays.  Freelists, for example,
+are called that for a reason.
+
 I recently translated the Lemon parser [into Zig][zitron], and let me
 tell you, Lemon uses linked lists for absolutely everything.  It even,
 at several points, uses an `O(n²)` algorithm on these linked lists!

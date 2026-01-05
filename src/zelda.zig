@@ -1542,10 +1542,12 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 } else return null;
             }
 
-            /// Find the first 'run': the first match and every match which directly
-            /// follows it.  Return the head and tail of the run, which may be the
-            /// same node.  Note that this is not a list!  It may be removed with
-            /// `list.extractRange`, if desired.
+            /// Find the first 'run': the first match and every match which
+            /// directly follows it.  Return the head and tail of the run, which
+            /// may be the same node.  Note that this is not a list!  Prefer
+            /// a 'taker' if removing runs, see `forwardTaker` for details.
+            /// `List.extractRange` is also suitable, perhaps preferable if you
+            /// want only one.
             pub fn firstRun(m: *Matcher, list: *List) ?struct { *Node, *Node } {
                 var m_node: ?*Node = list.first;
                 var m_first: ?*Node = null;
@@ -1568,11 +1570,11 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
 
             /// Find the last 'run': the last match and every match which
             /// directly precedes it.  Return the head and tail of the run,
-            /// which may be the same node.  Note that this is not a list!  It
-            /// will, however, be in 'list order', not the order in which they
-            /// are found.  It may be removed with `list.extractRange`, if
-            /// desired; this is one of the reasons why the head (last found) is
-            /// the first element of the struct.
+            /// which may be the same node.  Note that this is not a list!
+            /// It will, however, be in 'list order', not the order in which
+            /// they are found.  Prefer a 'taker' if removing runs, see
+            /// `backwardTaker` for details. `List.extractRange` is also
+            /// suitable, perhaps preferable if you want only one.
             pub fn lastRun(m: *Matcher, list: *List) ?struct { *Node, *Node } {
                 var m_node: ?*Node = list.last;
                 var m_first: ?*Node = null;
@@ -1612,7 +1614,8 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
 
             /// Find the next (forward) run after the provided Node.
             /// See `firstRun` for details.  Iterative use should pass
-            /// in `run.@"1"`.
+            /// in `run.@"1"`.  Prefer a 'taker' if removing runs, see
+            /// `forwardTaker` for details.
             pub fn nextRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
                 var list: List = .empty;
                 list.first = @field(node, next);
@@ -1621,11 +1624,26 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
 
             /// Find the previous (backward) run before the provided Node.
             /// See `lastRun` for details.  Iterative use should pass
-            /// in `run.@"0"`.
+            /// in `run.@"0"`.  Prefer a 'taker' if removing runs, see
+            /// `backwardTaker` for details.
             pub fn prevRun(m: *Matcher, node: *Node) ?struct { *Node, *Node } {
                 var list: List = .empty;
                 list.last = @field(node, prev);
                 return m.lastRun(&list);
+            }
+
+            /// Return a 'taker', which will iterate the list in the forward
+            /// direction, removing all matches and returning them, until none
+            /// are left.
+            pub fn forwardTaker(m: *Matcher, list: *List) ForwardTaker {
+                return .{ .m = m, .l = list, .this = list.first };
+            }
+
+            /// Return a 'taker', which will iterate the list in the backward
+            /// direction, removing all matches and returning them, until none
+            /// are left.
+            pub fn backwardTaker(m: *Matcher, list: *List) BackwardTaker {
+                return .{ .m = m, .l = list, .this = list.last };
             }
 
             /// Filter the list in a forward direction.  Just a synonym for
@@ -1671,6 +1689,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 return flist;
             }
 
+            /// Count the number of matches in `list`.
             pub fn count(m: *Matcher, list: *List) usize {
                 var matches: usize = 0;
                 var m_node: ?*Node = list.last;
@@ -1686,6 +1705,96 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 }
                 return matches;
             }
+
+            /// An iterator which takes and removes matches, or runs of
+            /// matches, in the forward direction.
+            pub const ForwardTaker = struct {
+                m: *Matcher,
+                l: *List,
+                this: ?*Node,
+
+                /// Take the next match.
+                pub fn take(t: *ForwardTaker) ?*Node {
+                    if (t.this) |this| {
+                        var p_list: List = .empty;
+                        p_list.first = this;
+                        const m_match = t.m.firstMatch(&p_list);
+                        if (m_match) |match| {
+                            t.this = @field(match, next);
+                            return t.l.popNode(match);
+                        } else {
+                            t.this = null;
+                        }
+                    }
+                    return null;
+                }
+
+                /// Take the next run of matches.
+                pub fn takeRun(t: *ForwardTaker) ?List {
+                    if (t.this) |this| {
+                        var p_list: List = .empty;
+                        p_list.first = this;
+                        const m_match = t.m.firstRun(&p_list);
+                        if (m_match) |match| {
+                            t.this = @field(match.@"1", next);
+                            return t.l.extractRange(match.@"0", match.@"1");
+                        } else {
+                            t.this = null;
+                        }
+                    }
+                    return null;
+                }
+
+                /// Answer if iteration is done.
+                pub fn done(t: *const ForwardTaker) bool {
+                    return t.this == null;
+                }
+            };
+
+            /// An iterator which takes and removes matches, or runs of
+            /// matches, in the backward direction.
+            pub const BackwardTaker = struct {
+                m: *Matcher,
+                l: *List,
+                this: ?*Node,
+
+                /// Take the previous match.
+                pub fn take(t: *BackwardTaker) ?*Node {
+                    if (t.this) |this| {
+                        var p_list: List = .empty;
+                        p_list.last = this;
+                        const m_match = t.m.lastMatch(&p_list);
+                        if (m_match) |match| {
+                            t.this = @field(match, prev);
+                            return t.l.popNode(match);
+                        } else {
+                            t.this = null;
+                        }
+                    }
+                    return null;
+                }
+
+                /// Take the previous run of matches.
+                pub fn takeRun(t: *BackwardTaker) ?List {
+                    if (t.this) |this| {
+                        var p_list: List = .empty;
+                        p_list.last = this;
+                        const m_match = t.m.lastRun(&p_list);
+                        if (m_match) |match| {
+                            t.this = @field(match.@"0", prev);
+                            return t.l.extractRange(match.@"0", match.@"1");
+                        } else {
+                            t.this = null;
+                        }
+                    }
+                    return null;
+                }
+
+                /// Answer if iteration is done.
+                pub fn done(t: *const BackwardTaker) bool {
+                    return t.this == null;
+                }
+            };
         };
 
         /// A doubly-linked list of `*Node`, comprising the first and last
@@ -2631,10 +2740,14 @@ fn singleSortTest(count: comptime_int) !void {
             half_list.insertOrderedAscending(bottom);
             half_list.removeUnchecked(bottom);
             half_list.insertOrderedDescending(bottom);
+            const four = sorts[3].mixer.removeNext().?;
+            try expect(!half_list.belongsTo(four));
+            half_list.insertOrderedDescending(four);
         }
         _ = half_list.remove(half_list.first.?);
         _ = half_list.removeUnchecked(half_list.first.?);
         var new_list: Sorted.Link.List = .empty;
+        try expect(!new_list.belongsTo(half_list.first.?));
         new_list.concat(&half_list);
         try expectEqual(null, half_list.first);
         try expectEqual(null, half_list.last);
@@ -3412,6 +3525,44 @@ fn cardTricks(comptime count: comptime_int) !void {
             list.concat(&queens);
             try expectEqual(count, list.len());
         }
+    }
+    {
+        var kings: Card.Link.List = .empty;
+        var matcher = match_lib.facer(.king);
+        var taker = matcher.forwardTaker(&list);
+        while (taker.take()) |king| {
+            kings.append(king);
+        }
+        list.concat(&kings);
+        taker.this = list.first;
+        var m_king_list = taker.takeRun();
+        if (m_king_list) |*king_list| {
+            try expectEqual(null, taker.takeRun());
+            list.concat(king_list);
+        }
+    }
+    {
+        var suits: Card.SuitLink.List = list.castTo(Card.SuitLink.List).*;
+        suits.sortDescending();
+        list = suits.castTo(Card.Link.List).*;
+        list.sortDescending();
+        var matcher = match_lib.facer(.ace);
+        var taker = matcher.backwardTaker(&list);
+        var aces: Card.Link.List = .empty;
+        while (taker.take()) |ace| {
+            aces.append(ace);
+        }
+        suits = aces.castTo(Card.SuitLink.List).*;
+        try expect(suits.isOrderedDescending());
+        try expect(aces.allEqual());
+        list.concat(&aces);
+        taker = matcher.backwardTaker(&list);
+        if (taker.takeRun()) |*aces_again| {
+            list.concat(@constCast(aces_again));
+            try expectEqual(null, taker.takeRun());
+        }
+        _ = list.first.?.link.fixForwardLinks();
+        _ = list.last.?.link.fixForwardLinks();
     }
     {
         list.sortAscending();
