@@ -2,9 +2,9 @@
 .{
     .name = .zelda,
 
-    .version = "0.0.1",
+    .version = "0.2.0",
 
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.2",
 
     .fingerprint = 0x351c56b398cf98c,
 

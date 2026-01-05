@@ -1,7 +1,6 @@
 //! Zelda: a Link to the List
 //!
-//! This library generates linked-list functions for a provided type, given
-//! the name of the field or fields which are linkable.
+//| A mixin library for singly- and doubly- linked lists.
 //!
 
 /// A CPU-friendly version of std.math.Order.  At some point I
@@ -79,10 +78,13 @@ pub fn aLinkBetweenWorlds(T: type) type {
 
 /// Returns a container type with methods for working with the Node type as
 /// nodes in a doubly-linked list, using the field names `next_name` and
-/// `prev_name`.  The container also contains a `List` type specialized to this
-/// type of node.  This can be called repeatedly with new pairs of nodes, or
-/// discrete order functions, it is advisable that each pair be disjoint but Zelda
-/// will not stop you from doing otherwise.
+/// `prev_name`.  You must define a field of this type in your struct, it will
+/// be zero-width; this is how you access the returned namespace of functions.
+/// The container also contains a `List` type specialized to this type of node.
+///
+/// This can be called repeatedly with new pairs of nodes, or discrete order
+/// functions.  It is advisable that each pair be disjoint (or identical) but
+/// Zelda will not stop you from doing otherwise.
 pub fn doublyLinkedList(Node: type, comptime next_name: anytype, comptime prev_name: anytype, comptime m_orderFn: ?[]const u8) type {
     // String-ify potential enum literal:
     const next: []const u8 = if (@typeInfo(@TypeOf(next_name)) == .enum_literal)
@@ -101,7 +103,9 @@ pub fn doublyLinkedList(Node: type, comptime next_name: anytype, comptime prev_n
 /// Provides a container with functions implementing singly-linkèd node
 /// behavior for the type, and a List type for making use of such lists.
 /// `next_name` must be a string or enum literal which represents a field of
-/// type `?*Node` on Node itself.
+/// type `?*Node` on Node itself.  You must define a field of this type in your
+/// struct, it will be zero-width; this is how you access the returned namespace
+/// of functions.
 ///
 /// It is legal to call this several times with different field names,
 /// or different order function declarations, mix and match, your choice.
@@ -154,15 +158,23 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             );
         };
 
-        pub const has_order = if (m_orderFn) |_| true else if (!info_has_orderFn) @hasDecl(Node, "zeldaOrderFn") else false;
+        /// Does this type define an order function?
+        pub const has_order = if (m_orderFn) |_|
+            true
+        else if (!info_has_orderFn)
+            @hasDecl(Node, "zeldaOrderFn")
+        else
+            false;
         const order_name = if (m_orderFn) |orderFn| orderFn else if (has_order) "zeldaOrderFn" else "";
 
+        /// The seek (iteration) limit, if any is defined.
         pub const seek_limit =
             if (@hasDecl(Node, "ZELDA_SEEK_LIMIT"))
                 Node.ZELDA_SEEK_LIMIT
             else if (@hasDecl(Node, "zelda_seek_limit"))
                 Node.zelda_seek_limit
             else {};
+        /// Does this type define a seek limit?
         pub const has_limit = @TypeOf(seek_limit) != void and @TypeOf(seek_limit) != @TypeOf(null);
 
         inline fn base(link: *Link) *Node {
@@ -366,6 +378,12 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             return inOrderFn(greaterThanEq)(head);
         }
 
+        /// Answer whether all nodes in the list compare as equal.
+        pub fn allEqual(link: *Link) bool {
+            const head = base(link);
+            return inOrderFn(equal)(head);
+        }
+
         inline fn orderGuard() void {
             if (!has_order)
                 @compileError(
@@ -397,6 +415,10 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
 
         inline fn greaterThanEq(n1: *const Node, n2: *const Node) bool {
             return @field(Node, order_name)(n1, n2) != .lt;
+        }
+
+        inline fn equal(n1: *const Node, n2: *const Node) bool {
+            return @field(Node, order_name)(n1, n2) == .eq;
         }
 
         fn insertSortFn(orderFn: fn (*Node, *Node) callconv(.@"inline") bool) fn (*Node, *Node) *Node {
@@ -808,6 +830,11 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             pub fn isOrderedDescending(list: *List) bool {
                 if (list.first == null) return true;
                 return @field(list.first.?, link_field).isOrderedDescending();
+            }
+
+            pub fn allEqual(list: *List) bool {
+                if (list.first == null) return true;
+                return @field(list.first.?, link_field).allEqual();
             }
 
             /// Sort the list in-place into ascending order.
@@ -1263,7 +1290,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             if (node_next) |nn| @field(nn, prev) = list.last;
         }
 
-        /// Slices the list in the `prev` direction of the receiver.  The list is
+        /// Splices the list in the `prev` direction of the receiver.  The list is
         /// not cleared and will be in an invalid state.  It is checked illegal
         /// behavior for `list` to be empty.  Prefer to use `spliceBackwardOf` on
         /// the list containing the node.
@@ -1298,8 +1325,8 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         /// This traverses the list backward, setting all forward links to
         /// point to their proper target.  This is the exotic companion to
         /// `fixBacklinks`, expected to be rarely used in practice.  Note that
-        /// this returns the _last_ node in the _backward_ direction, since you
-        /// already have the first one.
+        /// this returns the _last_ node in the _backward_ direction (the head),
+        /// since you already have the first one (the tail).
         pub fn fixForwardLinks(link: *Link) *Node {
             const node = base(link);
             var m_node: ?*Node = node;
@@ -2722,6 +2749,9 @@ fn singleSortTest(count: comptime_int) !void {
         half_list.insertOrderedAscending(&sorts[remove_at]);
         try expect(half_list.isOrderedAscending());
         try expectEqual(count, half_list.first.?.mixer.len());
+        half_list.removeUnchecked(&sorts[remove_at]);
+        half_list.insertOrderedDescending(&sorts[remove_at]);
+        half_list.sortAscending();
         {
             var top = &sorts[0];
             for (1..count) |i| {
@@ -2734,7 +2764,9 @@ fn singleSortTest(count: comptime_int) !void {
         {
             var bottom = &sorts[0];
             for (1..count) |i| {
-                if (sorts[i].val < bottom.val) bottom = &sorts[i];
+                if (sorts[i].val < bottom.val) {
+                    bottom = &sorts[i];
+                }
             }
             half_list.removeUnchecked(bottom);
             half_list.insertOrderedAscending(bottom);
@@ -2745,14 +2777,17 @@ fn singleSortTest(count: comptime_int) !void {
             half_list.insertOrderedDescending(four);
         }
         _ = half_list.remove(half_list.first.?);
-        _ = half_list.removeUnchecked(half_list.first.?);
+        const a_first = half_list.first.?;
+        half_list.removeUnchecked(half_list.first.?);
         var new_list: Sorted.Link.List = .empty;
         try expect(!new_list.belongsTo(half_list.first.?));
+        new_list.insertOrderedAscending(a_first);
         new_list.concat(&half_list);
         try expectEqual(null, half_list.first);
         try expectEqual(null, half_list.last);
         var new_new_list = new_list.first.?.mixer.toSortedListDescending();
         try expect(new_new_list.isOrderedDescending());
+        try expect(new_new_list.allEqual() or !new_new_list.isOrderedAscending());
     }
 }
 

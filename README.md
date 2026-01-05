@@ -81,7 +81,8 @@ If this specific organization is not suitable, or should you find
 yourself in a less than whimsical mood, these may be specified manually
 using `zelda.doublyLinkedList`.  Currently, any ordering function must
 be supplied as a string naming a public declaration, I may make it
-possible to provide this as a function at some later point.
+possible to provide this as a function (rather than the declared name of
+one) at some later point.
 
 There is nothing stopping you from creating several of these exotic
 zero-width fields, to handle multiple pairs of links or, more likely,
@@ -89,7 +90,7 @@ more than one sorting regimen.  You could even handle three link fields
 with two mixins, if you felt the urge to make your own life difficult in
 that way.
 
-Say you prefer, as indeed you might, a _singly_ linked list? We have
+Say you prefer, as indeed you might, a _singly_ linked list?  We have
 that as well!
 
 > It's yours, my friend, as long as you have enough rupees.
@@ -111,10 +112,14 @@ const Chunk64 = struct {
 Now your `Chunk64` will do single-linked node things, and has
 `Chunk64.List` to manage your freelist.
 
-These types are a proper superset of the functionality given by the
-stdlib types, and pass all the same tests, and a great many others.
-They exhibit somewhat different behavior for properties not tested in
-stdlib, for reasons I'll get into.
+The first edition of Zelda closely followed the API of the standard
+library, providing a superset of functionality, but with some semantic
+differences.  This time we follow our own logic: functions carry the
+same name when it makes sense (and occasionally when it does not),
+but by no means always, and we employ our own consistent semantics of
+invariance which differs from that used by `std`.
+
+But first, the no-magic approach to Zelda mixins.
 
 ### The Shirt and Tie API
 
@@ -131,7 +136,7 @@ it generates good machine code.  Zelda doesn't check this, so you can
 use the other one, or something even harder to optimize, so long as it
 returns `.lt`, `.eq`, and `.gt`, in a manner which leaves you happy with
 the resulting stable ordering.  Oh, and declare it `inline`, every little
-bit helps.
+bit helps (this is recommended, not mandatory).
 
 [smo]: https://ziglang.org/documentation/0.15.2/std/#std.math.Order
 
@@ -177,8 +182,8 @@ operating systems are postively lousy with them.
 
 Zelda provides merge sort.  It's a pretty good sort!  It's stable,
 it takes a sliver of constant space on the stack, has the optimal
-worst-case sort time of `O(n log n)`, and sorts an already-sorted list
-in `O(n)`.  It can't be pessimized with attacker-controlled input
+worst-case sort time of `Θ(n log n)`, and sorts an already-sorted list
+in `Θ(n)`.  It can't be pessimized with attacker-controlled input
 either.
 
 So don't be afraid to cons up a list, sort it, maybe sorted-insert a
@@ -194,7 +199,8 @@ Zelda list, and plenty you can do which the stdlib doesn't.
 So why not provide a data structure which: supports `O(1)` prepend
 _and_ append, concatenation in `O(1)`, which can be `O(1)` loaded onto a
 freelist, and so on?  Why not indeed.  It costs you an extra pointer, I
-suppose.
+suppose.  Sometimes that isn't acceptable, in which case, just hold on
+to the head.
 
 [zitron]: https://github.com/mnemnion/zitron/
 [^1]: I'm sure this is not actually true, the Internet being what it is.
@@ -229,7 +235,12 @@ indicated number of iterations[^2].
 Should you wish to make this build-configurable, arrange for the seek
 limit to be of type `@TypeOf(null)` and it will be disabled.  Note that
 this is subtly different from a `?usize` which happens to have the
-_value_ `null`.
+_value_ `null`:
+
+```zig
+    // Not just opts.limit, but:
+    pub const ZELDA_SEEK_LIMIT = if (opts.limit) |l| l else null;
+```
 
 [^2]: When practical and efficient, it will permit no more than the
 indicated number of iterations as well.  Which it usually is, but not
@@ -239,7 +250,7 @@ always.
 
 ```sh
 ➜  rg -F --count-matches '@field' -- src/zelda.zig
-264
+268
 ```
 
 Up from 95 in the last release.
@@ -250,10 +261,4 @@ Have at it:
 ```sh
 zig fetch --save https://github.com/mnemnion/zelda/archive/refs/tags/v0.2.0.tar.gz
 ```
-
-## Roadmap
-
-I'm probably going to add some stuff.
-
-That and test more.
 
