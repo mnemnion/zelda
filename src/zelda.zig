@@ -2770,6 +2770,7 @@ fn singleSortTest(count: comptime_int) !void {
             }
             half_list.removeUnchecked(bottom);
             half_list.insertOrderedAscending(bottom);
+            try expectEqual(bottom, half_list.first.?);
             half_list.removeUnchecked(bottom);
             half_list.insertOrderedDescending(bottom);
             const four = sorts[3].mixer.removeNext().?;
