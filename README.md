@@ -147,8 +147,11 @@ encourage, as there is talk of making `@field` take a "field enum",
 which should require no changes to code which prefers `.next_free` over
 `"next_free"`.
 
-You are encouraged to peruse the source, or build the docs, in order to
-pick up on what all these lists have built in.
+You are encouraged to peruse the source, or build the docs, in order
+to pick up on what all these lists have built in.  Specifically, the
+invariants documented in the doc comments of both `List` types are
+important for reasoning about Zelda operations, and ensuring that
+'manual' actions from userspace uphold the expectations there listed.
 
 ## Order, Lists, and Ordered Lists
 
@@ -186,8 +189,8 @@ worst-case sort time of `Θ(n log n)`, and sorts an already-sorted list
 in `Θ(n)`.  It can't be pessimized with attacker-controlled input
 either.
 
-So don't be afraid to cons up a list, sort it, maybe sorted-insert a
-few stragglers.  While amount of data exists where you would feel the
+So don't be afraid to cons up a list, sort it, maybe sorted-insert a few
+stragglers.  While an amount of data exists where you would feel the
 difference, it's more than you might think it is.
 
 A notable difference between Zig-standard `SinglyLinkedList` and the
@@ -244,7 +247,9 @@ _value_ `null`:
 
 [^2]: When practical and efficient, it will permit no more than the
 indicated number of iterations as well.  Which it usually is, but not
-always.
+always.  Note that user-level iterations, particularly those using
+the `Taker` iterators, _can_ get trapped in cycles and should use the
+iteration limit directly.
 
 ## Cool, How'd You Do It?
 
