@@ -667,28 +667,16 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
             /// dangerous to no actual benefit.  Benchmark or YOLO, it's your
             /// circus.
             pub fn removeUnchecked(list: *List, node: *Node) void {
-                if (list.first == node) {
-                    list.first = @field(node, next);
-                    if (list.last == node) {
-                        assert(list.first == null); // no-coverage
-                        list.last = list.first;
-                    }
-                    @field(node, next) = null;
-                } else {
-                    var current = list.first.?;
-                    while (true) {
-                        const next_node = @field(current, next).?;
-                        if (next_node == node) {
-                            @field(current, next) = @field(node, next);
-                            @field(node, next) = null;
-                            if (list.last == node) {
-                                list.last = current;
-                            }
-                            return;
-                        }
-                        current = next_node;
-                    }
+                var cursor = &list.first;
+                while (cursor.* != node) : (cursor = &@field(cursor.*.?, next)) {}
+                if (list.last == node) {
+                    if (list.first != list.last)
+                        list.last = @fieldParentPtr(next, cursor)
+                    else
+                        list.last = null;
                 }
+                cursor.* = @field(node, next);
+                @field(node, next) = null;
             }
 
             /// Answer whether the node is found in the list.  Provided
