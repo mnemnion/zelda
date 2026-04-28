@@ -264,6 +264,5 @@ Up from 95 in the last release.
 
 Have at it:
 ```sh
-zig fetch --save https://github.com/mnemnion/zelda/archive/refs/tags/v0.2.0.tar.gz
+zig fetch --save https://github.com/mnemnion/zelda/archive/refs/tags/v0.2.1.tar.gz
 ```
-
