@@ -2654,11 +2654,8 @@ test "Sorted singly-linked list" {
 
 fn singleSortTest(count: comptime_int) !void {
     var sorts: [count]Sorted = .{Sorted.empty} ** count;
-    var seed: u64 = undefined;
-    var prng = std.Random.DefaultPrng.init(rand: {
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :rand seed;
-    });
+    const seed: u64 = std.testing.random_seed;
+    var prng = std.Random.DefaultPrng.init(seed);
     errdefer std.debug.print("Seed on fail: 0x{x}", .{seed});
     for (0..count) |i| {
         sorts[i].val = prng.random().int(u32);
@@ -2787,15 +2784,8 @@ test singleSortTest {
 
 test "more sorts" {
     var sorts: [512]Sorted = .{Sorted.empty} ** 512;
-    var seed: u64 = undefined;
-    var prng = std.Random.DefaultPrng.init(rand: {
-        if (options.seed) |s| {
-            seed = s;
-            break :rand s;
-        }
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :rand seed;
-    });
+    const seed: u64 = options.seed orelse std.testing.random_seed;
+    var prng = std.Random.DefaultPrng.init(seed);
     errdefer std.debug.print("Seed on fail: 0x{x}", .{seed});
     for (0..512) |i| {
         sorts[i].val = prng.random().int(u32);
@@ -3273,15 +3263,8 @@ const match_lib = struct {
 
 fn cardTricks(comptime count: comptime_int) !void {
     var deck: [count]Card = .{Card.trump} ** count;
-    var seed: u64 = undefined;
-    var prng = std.Random.DefaultPrng.init(rand: {
-        if (options.seed) |s| {
-            seed = s;
-            break :rand s;
-        }
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :rand seed;
-    });
+    const seed: u64 = options.seed orelse std.testing.random_seed;
+    var prng = std.Random.DefaultPrng.init(seed);
     errdefer std.debug.print("Seed on fail: {d}\n", .{seed});
     for (0..count) |i| {
         deck[i].suit = prng.random().enumValue(Card.SuitKind);

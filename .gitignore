@@ -1,3 +1,4 @@
 // Ignore build artifacts
 .zig-cache/
 zig-out/
+zig-pkg/
