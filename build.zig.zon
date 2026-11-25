@@ -2,7 +2,7 @@
 .{
     .name = .zelda,
 
-    .version = "0.2.1",
+    .version = "0.2.2",
 
     .minimum_zig_version = "0.17.1",
 
