@@ -47,8 +47,8 @@ pub fn build(b: *std.Build) void {
     if (clean) {
         run_kcov.addArg("--clean");
     }
-    run_kcov.addArg("--exclude-line=unreachable,errdefer,expect(false),panic(,no-coverage");
-    run_kcov.addPrefixedDirectoryArg("--include-pattern=", b.path("src"));
+    run_kcov.addArg("--exclude-line=unreachable,expect(false),@panic,kcov-defer-error,kcov-test-cleanup,kcov-miss");
+    run_kcov.addDirectoryArg2(b.path("src"), .{ .prefix = "--include-pattern=", .make_absolute = true });
     const coverage_output = addOutputDirectoryArg(run_kcov, ".");
     run_kcov.addArtifactArg(module_unit_tests);
 

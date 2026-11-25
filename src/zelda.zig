@@ -133,10 +133,10 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         const link_field = link: {
             const t_info = @typeInfo(Node);
             if (t_info != .@"struct") @compileError("Link needs to be a struct");
-            const t_fields = t_info.@"struct".fields;
-            for (t_fields) |field| {
-                if (field.type == Link) {
-                    break :link field.name;
+            const t_fields = t_info.@"struct";
+            for (t_fields.field_names, t_fields.field_types) |field_name, field_type| {
+                if (field_type == Link) {
+                    break :link field_name;
                 }
             }
             @compileError(
@@ -146,10 +146,10 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
         };
 
         const next = maybe_next orelse next_name: {
-            const t_fields = @typeInfo(Node).@"struct".fields;
-            for (t_fields) |field| {
-                if (field.type == ?*Node) {
-                    break :next_name field.name;
+            const t_fields = @typeInfo(Node).@"struct";
+            for (t_fields.field_names, t_fields.field_types) |field_name, field_type| {
+                if (field_type == ?*Node) {
+                    break :next_name field_name;
                 }
             }
             @compileError(
@@ -475,7 +475,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                 pub fn msort(n: *Node) *Node {
                     orderGuard();
                     var ep: ?*Node = null;
-                    var set: [LISTSIZE]?*Node = .{null} ** LISTSIZE;
+                    var set: [LISTSIZE]?*Node = @splat(null);
                     var m_list: ?*Node = n;
                     var first = true;
                     while (m_list) |list| {
@@ -842,7 +842,7 @@ fn singlyLinkedListInner(Node: type, info: anytype) type {
                     pub fn msort(n: *Node) struct { *Node, *Node } {
                         orderGuard();
                         var ep: ?*Node = null;
-                        var set: [LISTSIZE]?*Node = .{null} ** LISTSIZE;
+                        var set: [LISTSIZE]?*Node = @splat(null);
                         var m_list: ?*Node = n;
                         var first = true;
                         while (m_list) |list| {
@@ -1012,10 +1012,10 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
         const link_field = link: {
             const t_info = @typeInfo(Node);
             if (t_info != .@"struct") @compileError("Link needs to be a struct");
-            const t_fields = t_info.@"struct".fields;
-            for (t_fields) |field| {
-                if (field.type == Link) {
-                    break :link field.name;
+            const t_fields = t_info.@"struct";
+            for (t_fields.field_names, t_fields.field_types) |field_name, field_type| {
+                if (field_type == Link) {
+                    break :link field_name;
                 }
             }
             @compileError(
@@ -1028,15 +1028,15 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
             .{ the_next, maybe_prev.? } //
         else next_names: {
             var find_names: struct { []const u8, []const u8 } = undefined;
-            const t_fields = @typeInfo(Node).@"struct".fields;
+            const t_fields = @typeInfo(Node).@"struct";
             var first = true;
-            for (t_fields) |field| {
-                if (field.type == ?*Node) {
+            for (t_fields.field_names, t_fields.field_types) |field_name, field_type| {
+                if (field_type == ?*Node) {
                     if (first) {
                         first = false;
-                        find_names.@"0" = field.name;
+                        find_names.@"0" = field_name;
                     } else {
-                        find_names.@"1" = field.name;
+                        find_names.@"1" = field_name;
                         break :next_names find_names;
                     }
                 }
@@ -2290,7 +2290,7 @@ fn doublyLinkedListInner(Node: type, info: anytype) type {
                 pub fn msort(n: *Node) struct { *Node, *Node } {
                     orderGuard();
                     var ep: ?*Node = null;
-                    var set: [LISTSIZE]?*Node = .{null} ** LISTSIZE;
+                    var set: [LISTSIZE]?*Node = @splat(null);
                     var m_list: ?*Node = n;
                     var first = true;
                     while (m_list) |list| {
@@ -2586,7 +2586,7 @@ const Sorted = struct {
 test "Sorted singly-linked list" {
     try testing.expect(Sorted.Link.has_order);
     //| Merge sorts
-    var sorts: [6]Sorted = .{Sorted.empty} ** 6;
+    var sorts: [6]Sorted = @splat(Sorted.empty);
     for (0..6) |i| {
         sorts[i].val = @intCast(12 - i);
     }
@@ -2653,7 +2653,7 @@ test "Sorted singly-linked list" {
 }
 
 fn singleSortTest(count: comptime_int) !void {
-    var sorts: [count]Sorted = .{Sorted.empty} ** count;
+    var sorts: [count]Sorted = @splat(Sorted.empty);
     const seed: u64 = std.testing.random_seed;
     var prng = std.Random.DefaultPrng.init(seed);
     errdefer std.debug.print("Seed on fail: 0x{x}", .{seed});
@@ -2758,7 +2758,7 @@ fn singleSortTest(count: comptime_int) !void {
             try expectEqual(bottom, half_list.first.?);
             half_list.removeUnchecked(bottom);
             half_list.insertOrderedDescending(bottom);
-            const four = sorts[3].mixer.removeNext().?;
+            const four = half_list.first.?.mixer.removeNext().?;
             try expect(!half_list.belongsTo(four));
             half_list.insertOrderedDescending(four);
         }
@@ -2783,7 +2783,7 @@ test singleSortTest {
 }
 
 test "more sorts" {
-    var sorts: [512]Sorted = .{Sorted.empty} ** 512;
+    var sorts: [512]Sorted = @splat(Sorted.empty);
     const seed: u64 = options.seed orelse std.testing.random_seed;
     var prng = std.Random.DefaultPrng.init(seed);
     errdefer std.debug.print("Seed on fail: 0x{x}", .{seed});
@@ -3217,7 +3217,7 @@ const Card = struct {
     pub const SuitLink = doublyLinkedList(Card, .over, .under, "suitRank");
 
     pub inline fn zeldaOrderFn(c1: *const Card, c2: *const Card) Order {
-        const diff = @intFromEnum(c1.face) - @intFromEnum(c2.face);
+        const diff = @backingInt(c1.face) - @backingInt(c2.face);
         if (diff < 0)
             return .lt
         else if (diff == 0)
@@ -3227,7 +3227,7 @@ const Card = struct {
     }
 
     pub inline fn suitRank(c1: *const Card, c2: *const Card) Order {
-        const diff = @intFromEnum(c1.suit) - @intFromEnum(c2.suit);
+        const diff = @backingInt(c1.suit) - @backingInt(c2.suit);
         if (diff < 0)
             return .lt
         else if (diff == 0)
@@ -3240,29 +3240,29 @@ const Card = struct {
 const match_lib = struct {
     pub fn matchSuit(ctx: ?*anyopaque, card: *Card) bool {
         const suit_val: usize = @intFromPtr(ctx);
-        const suit: Card.SuitKind = @enumFromInt(suit_val);
+        const suit: Card.SuitKind = @fromBackingInt(@intCast(suit_val));
         return card.suit == suit;
     }
 
     pub fn matchFace(ctx: ?*anyopaque, card: *Card) bool {
         const face_val: usize = @intFromPtr(ctx);
-        const face: Card.FaceKind = @enumFromInt(face_val);
+        const face: Card.FaceKind = @fromBackingInt(@intCast(face_val));
         return card.face == face;
     }
 
     pub fn suitor(suit: Card.SuitKind) Card.Link.Matcher {
-        const suit_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(suit))));
+        const suit_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@backingInt(suit))));
         return .{ .ctx = suit_ptr, .match = matchSuit };
     }
 
     pub fn facer(face: Card.FaceKind) Card.Link.Matcher {
-        const face_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@intFromEnum(face))));
+        const face_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(@backingInt(face))));
         return .{ .ctx = face_ptr, .match = matchFace };
     }
 };
 
 fn cardTricks(comptime count: comptime_int) !void {
-    var deck: [count]Card = .{Card.trump} ** count;
+    var deck: [count]Card = @splat(Card.trump);
     const seed: u64 = options.seed orelse std.testing.random_seed;
     var prng = std.Random.DefaultPrng.init(seed);
     errdefer std.debug.print("Seed on fail: {d}\n", .{seed});
@@ -3580,7 +3580,7 @@ fn cardTricks(comptime count: comptime_int) !void {
 }
 
 test "missed lines" {
-    var deck: [6]Card = .{Card.trump} ** 6;
+    var deck: [6]Card = @splat(Card.trump);
     deck[5].face = .queen;
 
     var list1: Card.Link.List = .empty;
